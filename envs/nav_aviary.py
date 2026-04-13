@@ -291,15 +291,18 @@ class NavAviary(BaseRLAviary):
         Returns:
             observation, info
         """
-        # Reset scenario and get start/goal
-        self.start_pos, self.goal_pos = self.scenario.reset(self.CLIENT)
+        # Generate start/goal BEFORE creating obstacles
+        self.start_pos, self.goal_pos = self.scenario._generate_start_goal()
 
         # Set initial position
         self.INIT_XYZS = np.array([self.start_pos])
         self.INIT_RPYS = np.array([[0, 0, 0]])
 
-        # Call parent reset
+        # Call parent reset (this calls p.resetSimulation())
         obs, info = super().reset(seed=seed, options=options)
+
+        # NOW create obstacles AFTER resetSimulation
+        self.scenario.reset(self.CLIENT)
 
         # Reset internal state
         self.control_step_counter = 0

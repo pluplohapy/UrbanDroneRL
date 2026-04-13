@@ -35,8 +35,8 @@ CURRICULUM_WINDOW = 200
 THRESHOLDS = {0: 0.90, 1: 0.75}
 
 # Stage 1 parameters (static obstacles)
-STAGE1_N_OBSTACLES = (4, 10)
-STAGE1_RADIUS = (0.15, 0.40)
+STAGE1_N_OBSTACLES = (8, 12)  # Умеренное количество
+STAGE1_RADIUS = (0.25, 0.50)  # Средняя толщина
 STAGE1_HEIGHT = (2.5, 5.0)
 
 # Stage 2 parameters (dynamic obstacles)

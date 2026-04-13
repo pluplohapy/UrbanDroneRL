@@ -65,9 +65,15 @@ class BaseScenario(ABC):
     def cleanup(self):
         """Remove all obstacles from simulation."""
         for obstacle in self.obstacles:
-            obstacle.remove()
+            try:
+                obstacle.remove()
+            except:
+                pass
         for obstacle in self.dynamic_obstacles:
-            obstacle.remove()
+            try:
+                obstacle.remove()
+            except:
+                pass
         self.obstacles = []
         self.dynamic_obstacles = []
 

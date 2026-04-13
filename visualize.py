@@ -11,13 +11,16 @@ from stable_baselines3.common.vec_env import VecNormalize, DummyVecEnv
 
 from envs.nav_aviary import NavAviary
 from scenarios.stage0_empty import Stage0Scenario
+from scenarios.stage1_static import Stage1Scenario
+from envs.visualization_utils import draw_arena_boundaries, draw_goal_marker
 import config
 
 
 def visualize_flight(model_path="models/ppo_drone_nav_test",
                      vec_normalize_path="models/vec_normalize_test.pkl",
                      n_episodes=5,
-                     deterministic=True):
+                     deterministic=True,
+                     stage=0):
     """
     Visualize trained model flying in PyBullet GUI.
 
@@ -26,6 +29,7 @@ def visualize_flight(model_path="models/ppo_drone_nav_test",
         vec_normalize_path: Path to VecNormalize stats
         n_episodes: Number of episodes to visualize
         deterministic: Use deterministic policy
+        stage: 0 for empty, 1 for static obstacles
     """
     print("=" * 60)
     print("DRONE NAVIGATION VISUALIZATION")
@@ -45,11 +49,20 @@ def visualize_flight(model_path="models/ppo_drone_nav_test",
     print("\n[SETUP] Creating visualization environment...")
 
     def make_env():
-        scenario = Stage0Scenario(seed=42)
+        if stage == 1:
+            scenario = Stage1Scenario(seed=42)
+            print("✓ Using Stage 1 (static obstacles)")
+        else:
+            scenario = Stage0Scenario(seed=42)
+            print("✓ Using Stage 0 (empty)")
         env = NavAviary(scenario=scenario, gui=True)  # GUI enabled
         return env
 
     env = DummyVecEnv([make_env])
+
+    # Disable PyBullet warnings
+    p.configureDebugVisualizer(p.COV_ENABLE_GUI, 1, physicsClientId=env.envs[0].CLIENT)
+    p.configureDebugVisualizer(p.COV_ENABLE_RENDERING, 1, physicsClientId=env.envs[0].CLIENT)
 
     # Load normalization stats
     try:
@@ -75,28 +88,14 @@ def visualize_flight(model_path="models/ppo_drone_nav_test",
         print(f"\nEpisode {episode + 1}/{n_episodes}")
         print("-" * 60)
 
+        # Draw arena boundaries
+        draw_arena_boundaries(env.envs[0].CLIENT)
+
         # Get goal position for visualization
         goal_pos = env.envs[0].goal_pos
 
-        # Draw goal marker in PyBullet
-        p.addUserDebugLine(
-            [goal_pos[0] - 0.2, goal_pos[1], goal_pos[2]],
-            [goal_pos[0] + 0.2, goal_pos[1], goal_pos[2]],
-            [0, 1, 0], 3, 0,
-            physicsClientId=env.envs[0].CLIENT
-        )
-        p.addUserDebugLine(
-            [goal_pos[0], goal_pos[1] - 0.2, goal_pos[2]],
-            [goal_pos[0], goal_pos[1] + 0.2, goal_pos[2]],
-            [0, 1, 0], 3, 0,
-            physicsClientId=env.envs[0].CLIENT
-        )
-        p.addUserDebugLine(
-            [goal_pos[0], goal_pos[1], goal_pos[2] - 0.2],
-            [goal_pos[0], goal_pos[1], goal_pos[2] + 0.2],
-            [0, 1, 0], 3, 0,
-            physicsClientId=env.envs[0].CLIENT
-        )
+        # Draw goal marker
+        draw_goal_marker(goal_pos, env.envs[0].CLIENT)
 
         # Track trajectory
         trajectory = []
@@ -110,13 +109,32 @@ def visualize_flight(model_path="models/ppo_drone_nav_test",
             curr_pos = env.envs[0]._getDroneStateVector(0)[:3]
             trajectory.append(curr_pos.copy())
 
-            # Draw trajectory line
+            # Update camera to follow drone (third person view)
+            # Camera stays behind and above the drone
+            p.resetDebugVisualizerCamera(
+                cameraDistance=5.0,  # Distance from drone
+                cameraYaw=50,  # You can rotate with mouse
+                cameraPitch=-35,  # Angle from above
+                cameraTargetPosition=curr_pos,  # Follow drone
+                physicsClientId=env.envs[0].CLIENT
+            )
+
+            # Print drone position every 30 steps
+            if step % 30 == 0:
+                dist_to_goal = ((curr_pos[0] - goal_pos[0])**2 +
+                               (curr_pos[1] - goal_pos[1])**2 +
+                               (curr_pos[2] - goal_pos[2])**2)**0.5
+                print(f"  Step {step:3d} | Drone: [{curr_pos[0]:6.2f}, {curr_pos[1]:6.2f}, {curr_pos[2]:6.2f}] | "
+                      f"Goal: [{goal_pos[0]:6.2f}, {goal_pos[1]:6.2f}, {goal_pos[2]:6.2f}] | "
+                      f"Distance: {dist_to_goal:5.2f}m")
+
+            # Draw trajectory line (thicker)
             if prev_pos is not None:
                 p.addUserDebugLine(
                     prev_pos,
                     curr_pos,
                     [1, 0, 0],  # Red color
-                    2,  # Line width
+                    5,  # Thicker line
                     0,  # Line lifetime (0 = permanent)
                     physicsClientId=env.envs[0].CLIENT
                 )
@@ -164,6 +182,8 @@ if __name__ == "__main__":
                         help="Number of episodes to visualize")
     parser.add_argument("--stochastic", action="store_true",
                         help="Use stochastic policy instead of deterministic")
+    parser.add_argument("--stage", type=int, default=0,
+                        help="Stage: 0=empty, 1=static obstacles")
 
     args = parser.parse_args()
 
@@ -171,5 +191,6 @@ if __name__ == "__main__":
         model_path=args.model,
         vec_normalize_path=args.normalize,
         n_episodes=args.episodes,
-        deterministic=not args.stochastic
+        deterministic=not args.stochastic,
+        stage=args.stage
     )

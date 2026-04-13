@@ -1,17 +1,20 @@
 """
-Continue training from saved checkpoint.
+Training script for Stage 1 (static obstacles).
+Starts from Stage 0 checkpoint and continues training with obstacles.
 """
 
 import os
+os.environ['KMP_DUPLICATE_LIB_OK'] = 'TRUE'
+
 import numpy as np
 from stable_baselines3 import PPO
-from stable_baselines3.common.vec_env import SubprocVecEnv, VecNormalize
+from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
 from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.monitor import Monitor
 import torch
 
 from envs.nav_aviary import NavAviary
-from scenarios.stage0_empty import Stage0Scenario
+from scenarios.stage1_static import Stage1Scenario
 import config
 
 
@@ -58,7 +61,7 @@ class ProgressCallback(BaseCallback):
 
 def make_env(rank, seed=0):
     def _init():
-        scenario = Stage0Scenario(seed=seed + rank)
+        scenario = Stage1Scenario(seed=seed + rank)
         env = NavAviary(scenario=scenario, gui=False)
         env = Monitor(env)
         return env
@@ -66,60 +69,62 @@ def make_env(rank, seed=0):
 
 
 def main():
-    print("=" * 60)
-    print("CONTINUE TRAINING FROM CHECKPOINT")
-    print("=" * 60)
+    import sys
+    sys.stdout.flush()
+    print("=" * 60, flush=True)
+    print("STAGE 1 TRAINING - STATIC OBSTACLES", flush=True)
+    print("=" * 60, flush=True)
 
-    # Check if checkpoint exists
-    model_path = "models/ppo_drone_nav.zip"
-    vec_normalize_path = "models/vec_normalize.pkl"
+    # Check if Stage 0 checkpoint exists
+    stage0_model = "models/ppo_drone_nav.zip"
+    stage0_normalize = "models/vec_normalize.pkl"
 
-    if not os.path.exists(model_path):
-        print(f"\n✗ Model not found at {model_path}")
-        print("Please train first with: python train.py")
+    if not os.path.exists(stage0_model):
+        print(f"\n✗ Stage 0 model not found at {stage0_model}")
+        print("Please train Stage 0 first with: python train.py")
         return
 
     np.random.seed(config.SEED)
     torch.manual_seed(config.SEED)
 
-    print(f"\n[LOAD] Loading checkpoint...")
+    os.makedirs("logs", exist_ok=True)
+    os.makedirs("models", exist_ok=True)
 
-    # Create environments
+    print(f"\n[CONFIG] Stage 1 parameters:")
+    print(f"  Obstacles: {config.STAGE1_N_OBSTACLES[0]}-{config.STAGE1_N_OBSTACLES[1]}")
+    print(f"  Radius: {config.STAGE1_RADIUS[0]}-{config.STAGE1_RADIUS[1]}m")
+    print(f"  Height: {config.STAGE1_HEIGHT[0]}-{config.STAGE1_HEIGHT[1]}m (full cylinders)")
+
+    print(f"\n[LOAD] Loading Stage 0 checkpoint...")
+
+    # Create environments with Stage 1
     env_fns = [make_env(i, config.SEED) for i in range(config.N_ENVS)]
-    vec_env = SubprocVecEnv(env_fns)
+    vec_env = DummyVecEnv(env_fns)
 
-    # Load VecNormalize stats
-    vec_env = VecNormalize.load(vec_normalize_path, vec_env)
+    # Load VecNormalize stats from Stage 0
+    vec_env = VecNormalize.load(stage0_normalize, vec_env)
     vec_env.training = True
     vec_env.norm_reward = True
     print("✓ VecNormalize stats loaded")
 
-    # Load model
-    model = PPO.load(model_path, env=vec_env)
-    print("✓ Model loaded")
+    # Load Stage 0 model
+    model = PPO.load(stage0_model, env=vec_env)
+    print("✓ Stage 0 model loaded")
 
-    # Get current timesteps
     current_steps = model.num_timesteps
-    print(f"\nCurrent training steps: {current_steps}")
-
-    # Ask for additional steps
-    additional_steps = int(input("Additional steps to train (e.g., 300000): "))
-    total_steps = current_steps + additional_steps
-
-    print(f"\nWill train from {current_steps} to {total_steps} steps")
-    print(f"Additional steps: {additional_steps}")
+    print(f"\nStarting from {current_steps} steps (Stage 0)")
 
     progress_callback = ProgressCallback()
 
-    print(f"\n[TRAINING] Starting training...")
+    print(f"\n[TRAINING] Starting Stage 1 training...")
     print("-" * 60)
 
     try:
         model.learn(
-            total_timesteps=additional_steps,
+            total_timesteps=1500000,  # 1.5M additional steps
             callback=progress_callback,
             progress_bar=False,
-            reset_num_timesteps=False  # Important: don't reset timestep counter
+            reset_num_timesteps=False
         )
         print("\n" + "-" * 60)
         print("✓ Training completed")
@@ -127,19 +132,19 @@ def main():
     except KeyboardInterrupt:
         print("\n\n[INFO] Training interrupted")
 
-    print(f"\n[SAVE] Saving model...")
-    model.save("models/ppo_drone_nav")
-    vec_env.save("models/vec_normalize.pkl")
+    print(f"\n[SAVE] Saving Stage 1 model...")
+    model.save("models/ppo_drone_nav_stage1")
+    vec_env.save("models/vec_normalize_stage1.pkl")
     print("✓ Model saved")
 
     vec_env.close()
 
     print("\n" + "=" * 60)
-    print("TRAINING FINISHED")
+    print("STAGE 1 TRAINING FINISHED")
     print("=" * 60)
     print(f"\nTotal training steps: {model.num_timesteps}")
     print("\nДля визуализации:")
-    print("  python visualize.py --model models/ppo_drone_nav --normalize models/vec_normalize.pkl")
+    print("  python visualize.py --model models/ppo_drone_nav_stage1 --normalize models/vec_normalize_stage1.pkl")
 
 
 if __name__ == "__main__":
