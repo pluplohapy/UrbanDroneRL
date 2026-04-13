@@ -30,6 +30,7 @@ class NavAviary(BaseRLAviary):
         self.prev_dist_to_goal = None
         self.control_step_counter = 0  # Renamed to avoid conflict with BaseRLAviary
         self.prev_action = np.zeros(4)
+        self.visited_cells = set()  # For exploration bonus
 
         # Initialize raycast sensor
         self.raycast_sensor = RaycastSensor(ray_length=config.RAY_LENGTH)
@@ -199,6 +200,16 @@ class NavAviary(BaseRLAviary):
         # Update previous distance
         self.prev_dist_to_goal = curr_dist
 
+        # Exploration bonus - награда за посещение новых клеток
+        grid_x = int((drone_pos[0] + config.ARENA_SIZE_X / 2) / config.EXPLORATION_GRID_SIZE)
+        grid_y = int((drone_pos[1] + config.ARENA_SIZE_Y / 2) / config.EXPLORATION_GRID_SIZE)
+        grid_z = int(drone_pos[2] / config.EXPLORATION_GRID_SIZE)
+        grid_key = (grid_x, grid_y, grid_z)
+
+        if grid_key not in self.visited_cells:
+            self.visited_cells.add(grid_key)
+            reward += config.REWARD_EXPLORATION_BONUS
+
         # Proximity penalty based on raycasts - УСИЛЕННЫЙ штраф
         raycasts = self.raycast_sensor.cast_rays(drone_pos, drone_quat, self.CLIENT)
         min_ray = np.min(raycasts)
@@ -313,6 +324,7 @@ class NavAviary(BaseRLAviary):
         self.control_step_counter = 0
         self.prev_dist_to_goal = np.linalg.norm(self.goal_pos - self.start_pos)
         self.prev_action = np.zeros(4)
+        self.visited_cells = set()  # Reset exploration tracking
 
         return obs, info
 

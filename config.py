@@ -29,6 +29,8 @@ REWARD_PROGRESS_SCALE = 6.0
 REWARD_PROXIMITY_THRESHOLD = 0.5  # Увеличено с 0.4
 REWARD_PROXIMITY_SCALE = 8.0  # Увеличено с 1.2 - сильнее штраф за препятствия
 REWARD_STEP_PENALTY = 0.002
+REWARD_EXPLORATION_BONUS = 0.5  # Награда за посещение новой клетки
+EXPLORATION_GRID_SIZE = 1.0  # Размер клетки сетки в метрах
 
 # Curriculum parameters
 CURRICULUM_WINDOW = 200
