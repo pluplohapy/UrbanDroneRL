@@ -9,8 +9,8 @@ ARENA_SIZE_Y = 15.0
 ARENA_HEIGHT = 5.0
 MIN_START_GOAL_DIST = 8.0
 MIN_CLEARANCE = 1.0
-SUCCESS_DIST = 0.5
-MAX_STEPS = 750  # Увеличено с 500 для большего времени на достижение цели
+SUCCESS_DIST = 1.0  # Увеличено с 0.5 для более легкого попадания
+MAX_STEPS = 750
 
 # Control parameters (velocity control)
 VX_MAX = 1.5
@@ -23,12 +23,12 @@ N_RAYS = 16
 RAY_LENGTH = 5.0
 
 # Reward parameters
-REWARD_SUCCESS = 500.0  # Увеличено с 100.0 для мотивации достижения цели
+REWARD_SUCCESS = 500.0
 REWARD_CRASH = -100.0
-REWARD_PROGRESS_SCALE = 6.0  # Увеличено с 3.0 для мотивации быстрого полёта
-REWARD_PROXIMITY_THRESHOLD = 0.4
-REWARD_PROXIMITY_SCALE = 1.2
-REWARD_STEP_PENALTY = 0.002  # Уменьшено с 0.008 чтобы дрон не боялся лететь
+REWARD_PROGRESS_SCALE = 6.0
+REWARD_PROXIMITY_THRESHOLD = 0.5  # Увеличено с 0.4
+REWARD_PROXIMITY_SCALE = 8.0  # Увеличено с 1.2 - сильнее штраф за препятствия
+REWARD_STEP_PENALTY = 0.002
 
 # Curriculum parameters
 CURRICULUM_WINDOW = 200

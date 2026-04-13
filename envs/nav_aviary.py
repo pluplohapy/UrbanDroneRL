@@ -112,19 +112,19 @@ class NavAviary(BaseRLAviary):
 
     def _observationSpace(self):
         """
-        Define observation space: 27 features.
+        Define observation space: 28 features (было 27).
 
         Returns:
-            Box space for 27-dimensional observation
+            Box space for 28-dimensional observation
         """
-        return spaces.Box(low=-1.0, high=1.0, shape=(27,), dtype=np.float32)
+        return spaces.Box(low=-1.0, high=1.0, shape=(28,), dtype=np.float32)
 
     def _computeObs(self):
         """
-        Compute observation vector (27 features).
+        Compute observation vector (28 features).
 
         Returns:
-            np.ndarray of shape (27,)
+            np.ndarray of shape (28,)
         """
         # Get drone state
         drone_pos = self._getDroneStateVector(0)[:3]
@@ -140,26 +140,31 @@ class NavAviary(BaseRLAviary):
         max_dist = np.sqrt(config.ARENA_SIZE_X**2 + config.ARENA_SIZE_Y**2 + config.ARENA_HEIGHT**2)
         goal_body_norm = goal_body / max_dist
 
-        # 2. Linear velocity in body frame, normalized (3)
+        # 2. Distance to goal (1) - НОВОЕ!
+        dist_to_goal = np.linalg.norm(goal_world)
+        dist_to_goal_norm = np.clip(dist_to_goal / max_dist, 0, 1)
+
+        # 3. Linear velocity in body frame, normalized (3)
         vel_body = rot_matrix.T @ drone_vel
         vel_norm = np.clip(vel_body / np.array([config.VX_MAX, config.VY_MAX, config.VZ_MAX]), -1, 1)
 
-        # 3. Normalized height (1)
+        # 4. Normalized height (1)
         height_norm = drone_pos[2] / config.ARENA_HEIGHT
 
-        # 4. Previous action (4)
+        # 5. Previous action (4)
         prev_action = self.prev_action
 
-        # 5. Raycasts (16)
+        # 6. Raycasts (16)
         raycasts = self.raycast_sensor.cast_rays(drone_pos, drone_quat, self.CLIENT)
 
         # Concatenate all features
         obs = np.concatenate([
-            goal_body_norm,      # 3
-            vel_norm,            # 3
-            [height_norm],       # 1
-            prev_action,         # 4
-            raycasts             # 16
+            goal_body_norm,        # 3
+            [dist_to_goal_norm],   # 1 - НОВОЕ!
+            vel_norm,              # 3
+            [height_norm],         # 1
+            prev_action,           # 4
+            raycasts               # 16
         ])
 
         return obs.astype(np.float32)
@@ -180,21 +185,21 @@ class NavAviary(BaseRLAviary):
         progress = self.prev_dist_to_goal - curr_dist
         reward = config.REWARD_PROGRESS_SCALE * progress
 
-        # Velocity reward - награда за полёт в направлении цели (уменьшена)
+        # Velocity reward - награда за полёт в направлении цели
         goal_world = self.goal_pos - drone_pos
         goal_direction = goal_world / (np.linalg.norm(goal_world) + 1e-6)
         velocity_towards_goal = np.dot(drone_vel, goal_direction)
-        velocity_reward = 0.1 * max(0, velocity_towards_goal)  # Уменьшено с 0.5
+        velocity_reward = 0.2 * max(0, velocity_towards_goal)
         reward += velocity_reward
 
-        # Proximity bonus - экспоненциальная награда за близость к цели
-        proximity_bonus = 2.0 * np.exp(-curr_dist)  # Уменьшено с 10.0
+        # Proximity bonus - УСИЛЕННАЯ награда за близость к цели
+        proximity_bonus = 15.0 * np.exp(-curr_dist)  # Увеличено с 2.0
         reward += proximity_bonus
 
         # Update previous distance
         self.prev_dist_to_goal = curr_dist
 
-        # Proximity penalty based on raycasts
+        # Proximity penalty based on raycasts - УСИЛЕННЫЙ штраф
         raycasts = self.raycast_sensor.cast_rays(drone_pos, drone_quat, self.CLIENT)
         min_ray = np.min(raycasts)
 
