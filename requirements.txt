@@ -1,0 +1,6 @@
+git+https://github.com/utiasDSL/gym-pybullet-drones.git
+stable-baselines3[extra]
+tensorboard
+numpy
+pybullet
+gymnasium
