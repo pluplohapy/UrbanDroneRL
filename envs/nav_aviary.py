@@ -188,7 +188,7 @@ class NavAviary(BaseRLAviary):
         reward += velocity_reward
 
         # Proximity bonus - экспоненциальная награда за близость к цели
-        proximity_bonus = 10.0 * np.exp(-curr_dist)  # Максимум 10 при dist=0
+        proximity_bonus = 2.0 * np.exp(-curr_dist)  # Уменьшено с 10.0
         reward += proximity_bonus
 
         # Update previous distance
@@ -345,5 +345,9 @@ class NavAviary(BaseRLAviary):
                 reward += config.REWARD_SUCCESS
             elif info["is_crash"]:
                 reward += config.REWARD_CRASH
+
+        # Add timeout penalty if episode ends without success
+        if truncated and not terminated:
+            reward -= 50.0  # Штраф за timeout без достижения цели
 
         return obs, reward, terminated, truncated, info

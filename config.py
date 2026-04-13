@@ -23,7 +23,7 @@ N_RAYS = 16
 RAY_LENGTH = 5.0
 
 # Reward parameters
-REWARD_SUCCESS = 100.0
+REWARD_SUCCESS = 500.0  # Увеличено с 100.0 для мотивации достижения цели
 REWARD_CRASH = -100.0
 REWARD_PROGRESS_SCALE = 6.0  # Увеличено с 3.0 для мотивации быстрого полёта
 REWARD_PROXIMITY_THRESHOLD = 0.4
