@@ -35,17 +35,7 @@ def visualize_flight(model_path="models/ppo_drone_nav_test",
     print("DRONE NAVIGATION VISUALIZATION")
     print("=" * 60)
 
-    # Load model
-    print(f"\n[LOAD] Loading model from {model_path}...")
-    try:
-        model = PPO.load(model_path)
-        print("✓ Model loaded")
-    except FileNotFoundError:
-        print(f"✗ Model not found at {model_path}")
-        print("Please train the model first with: python train_test.py")
-        return
-
-    # Create environment with GUI
+    # Create environment with GUI FIRST
     print("\n[SETUP] Creating visualization environment...")
 
     def make_env():
@@ -72,6 +62,17 @@ def visualize_flight(model_path="models/ppo_drone_nav_test",
         print("✓ Normalization stats loaded")
     except FileNotFoundError:
         print("⚠ Normalization stats not found, using unnormalized environment")
+
+    # Load model AFTER environment is set up
+    print(f"\n[LOAD] Loading model from {model_path}...")
+    try:
+        model = PPO.load(model_path, env=env)
+        print("✓ Model loaded")
+    except FileNotFoundError:
+        print(f"✗ Model not found at {model_path}")
+        print("Please train the model first with: python train_test.py")
+        env.close()
+        return
 
     print("\n[INFO] Controls:")
     print("  - Close PyBullet window to stop")
@@ -101,41 +102,61 @@ def visualize_flight(model_path="models/ppo_drone_nav_test",
         trajectory = []
         prev_pos = None
 
+        # Debug tracking
+        actions_log = []
+        velocities_log = []
+        heading_errors_log = []
+        distances_log = []
+
         while not done:
             # Get action from model
             action, _ = model.predict(obs, deterministic=deterministic)
+            actions_log.append(action[0].copy())
 
-            # Get current position
+            # Get current state
             curr_pos = env.envs[0]._getDroneStateVector(0)[:3]
+            curr_vel = env.envs[0]._getDroneStateVector(0)[10:13]
             trajectory.append(curr_pos.copy())
+            velocities_log.append(curr_vel.copy())
+
+            # Calculate metrics
+            dist_to_goal = np.linalg.norm(goal_pos - curr_pos)
+            distances_log.append(dist_to_goal)
+
+            # Heading error
+            goal_direction = (goal_pos - curr_pos) / (dist_to_goal + 1e-6)
+            speed = np.linalg.norm(curr_vel)
+            if speed > 0.1:
+                vel_direction = curr_vel / speed
+                heading_error = np.arccos(np.clip(np.dot(vel_direction, goal_direction), -1, 1))
+                heading_errors_log.append(np.degrees(heading_error))
+            else:
+                heading_errors_log.append(90.0)
 
             # Update camera to follow drone (third person view)
-            # Camera stays behind and above the drone
             p.resetDebugVisualizerCamera(
-                cameraDistance=5.0,  # Distance from drone
-                cameraYaw=50,  # You can rotate with mouse
-                cameraPitch=-35,  # Angle from above
-                cameraTargetPosition=curr_pos,  # Follow drone
+                cameraDistance=5.0,
+                cameraYaw=50,
+                cameraPitch=-35,
+                cameraTargetPosition=curr_pos,
                 physicsClientId=env.envs[0].CLIENT
             )
 
-            # Print drone position every 30 steps
+            # Print detailed info every 30 steps
             if step % 30 == 0:
-                dist_to_goal = ((curr_pos[0] - goal_pos[0])**2 +
-                               (curr_pos[1] - goal_pos[1])**2 +
-                               (curr_pos[2] - goal_pos[2])**2)**0.5
-                print(f"  Step {step:3d} | Drone: [{curr_pos[0]:6.2f}, {curr_pos[1]:6.2f}, {curr_pos[2]:6.2f}] | "
-                      f"Goal: [{goal_pos[0]:6.2f}, {goal_pos[1]:6.2f}, {goal_pos[2]:6.2f}] | "
-                      f"Distance: {dist_to_goal:5.2f}m")
+                print(f"  Step {step:3d} | Pos: [{curr_pos[0]:6.2f}, {curr_pos[1]:6.2f}, {curr_pos[2]:6.2f}] | "
+                      f"Dist: {dist_to_goal:5.2f}m | Speed: {speed:4.2f}m/s | Heading: {heading_errors_log[-1]:5.1f}°")
+                print(f"           | Action: [{action[0][0]:5.2f}, {action[0][1]:5.2f}, {action[0][2]:5.2f}, {action[0][3]:5.2f}] | "
+                      f"Vel: [{curr_vel[0]:5.2f}, {curr_vel[1]:5.2f}, {curr_vel[2]:5.2f}]")
 
-            # Draw trajectory line (thicker)
+            # Draw trajectory line
             if prev_pos is not None:
                 p.addUserDebugLine(
                     prev_pos,
                     curr_pos,
                     [1, 0, 0],  # Red color
-                    5,  # Thicker line
-                    0,  # Line lifetime (0 = permanent)
+                    5,
+                    0,
                     physicsClientId=env.envs[0].CLIENT
                 )
             prev_pos = curr_pos
@@ -153,10 +174,35 @@ def visualize_flight(model_path="models/ppo_drone_nav_test",
                          "CRASH ✗" if info[0].get("is_crash", False) else \
                          "TIMEOUT"
 
-                print(f"  Result: {result}")
+                # Calculate episode statistics
+                min_dist = min(distances_log)
+                avg_speed = np.mean([np.linalg.norm(v) for v in velocities_log])
+                avg_heading = np.mean(heading_errors_log) if heading_errors_log else 0
+
+                # Path efficiency
+                straight_dist = np.linalg.norm(goal_pos - trajectory[0])
+                path_length = sum(np.linalg.norm(trajectory[i] - trajectory[i-1])
+                                 for i in range(1, len(trajectory)))
+                path_efficiency = straight_dist / (path_length + 1e-6)
+
+                # Action statistics
+                actions_array = np.array(actions_log)
+                action_mean = np.mean(actions_array, axis=0)
+                action_std = np.std(actions_array, axis=0)
+                action_smoothness = np.mean([np.linalg.norm(actions_log[i] - actions_log[i-1])
+                                            for i in range(1, len(actions_log))]) if len(actions_log) > 1 else 0
+
+                print(f"\n  Result: {result}")
                 print(f"  Steps: {step}")
-                print(f"  Reward: {episode_reward:.2f}")
+                print(f"  Episode reward: {episode_reward:.2f}")
                 print(f"  Final distance: {info[0].get('dist_to_goal', 0):.2f}m")
+                print(f"  Min distance: {min_dist:.2f}m")
+                print(f"  Avg speed: {avg_speed:.2f}m/s")
+                print(f"  Avg heading error: {avg_heading:.1f}°")
+                print(f"  Path efficiency: {path_efficiency:.2f}")
+                print(f"  Action mean: [{action_mean[0]:.2f}, {action_mean[1]:.2f}, {action_mean[2]:.2f}, {action_mean[3]:.2f}]")
+                print(f"  Action std: [{action_std[0]:.2f}, {action_std[1]:.2f}, {action_std[2]:.2f}, {action_std[3]:.2f}]")
+                print(f"  Action smoothness: {action_smoothness:.3f}")
                 print(f"  Trajectory length: {len(trajectory)} points")
 
                 # Pause between episodes

@@ -101,8 +101,8 @@ def collect_trajectories(model_path, vec_normalize_path, n_episodes=100, seed=42
         truncated = False
 
         while not (terminated or truncated) and step < config.MAX_STEPS:
-            # Use stochastic policy for variation
-            action, _ = model.predict(obs_normalized, deterministic=False)
+            # Use deterministic policy for best performance
+            action, _ = model.predict(obs_normalized, deterministic=True)
 
             # Step environment directly (no vectorization)
             obs, reward, terminated, truncated, info = env.step(action)
