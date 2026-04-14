@@ -131,7 +131,7 @@ def main():
 
     try:
         model.learn(
-            total_timesteps=2400000,  # 3M additional steps (было 1.5M)
+            total_timesteps=2000000,  # 3M additional steps (было 1.5M)
             callback=progress_callback,
             progress_bar=False,
             reset_num_timesteps=False

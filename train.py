@@ -67,8 +67,14 @@ def make_env(rank, seed=0):
 
 def main():
     print("=" * 60)
-    print("DRONE NAVIGATION TRAINING - 300K STEPS")
+    print("DRONE NAVIGATION TRAINING - STAGE 0")
     print("=" * 60)
+
+    # Check if Stage 0 checkpoint exists (для дообучения)
+    stage0_model = "models/ppo_drone_nav.zip"
+    stage0_normalize = "models/vec_normalize.pkl"
+
+    continue_training = os.path.exists(stage0_model) and os.path.exists(stage0_normalize)
 
     np.random.seed(config.SEED)
     torch.manual_seed(config.SEED)
@@ -86,24 +92,38 @@ def main():
     env_fns = [make_env(i, config.SEED) for i in range(config.N_ENVS)]
     vec_env = SubprocVecEnv(env_fns)
 
-    vec_env = VecNormalize(
-        vec_env,
-        norm_obs=True,
-        norm_reward=True,
-        clip_obs=10.0,
-        clip_reward=10.0
-    )
-    print("✓ Environments created")
+    if continue_training:
+        print(f"\n[LOAD] Found Stage 0 checkpoint, continuing training...")
+        # Load VecNormalize stats
+        vec_env = VecNormalize.load(stage0_normalize, vec_env)
+        vec_env.training = True
+        vec_env.norm_reward = True
+        print("✓ VecNormalize stats loaded")
 
-    print(f"\n[SETUP] Creating PPO model...")
-    model = PPO(
-        **config.PPO_PARAMS,
-        env=vec_env,
-        tensorboard_log="./logs/",
-        verbose=0,
-        device="auto"
-    )
-    print("✓ Model created")
+        # Load model
+        model = PPO.load(stage0_model, env=vec_env)
+        print("✓ Stage 0 model loaded")
+        print(f"\nStarting from {model.num_timesteps} steps")
+    else:
+        print(f"\n[SETUP] No checkpoint found, starting from scratch...")
+        vec_env = VecNormalize(
+            vec_env,
+            norm_obs=True,
+            norm_reward=True,
+            clip_obs=10.0,
+            clip_reward=10.0
+        )
+        print("✓ Environments created")
+
+        print(f"\n[SETUP] Creating PPO model...")
+        model = PPO(
+            **config.PPO_PARAMS,
+            env=vec_env,
+            tensorboard_log="./logs/",
+            verbose=0,
+            device="auto"
+        )
+        print("✓ Model created")
 
     progress_callback = ProgressCallback()
 
@@ -112,9 +132,10 @@ def main():
 
     try:
         model.learn(
-            total_timesteps=1000000,
+            total_timesteps=1500000,
             callback=progress_callback,
-            progress_bar=False
+            progress_bar=False,
+            reset_num_timesteps=False  # Продолжить счетчик шагов
         )
         print("\n" + "-" * 60)
         print("✓ Training completed")
@@ -132,6 +153,7 @@ def main():
     print("\n" + "=" * 60)
     print("TRAINING FINISHED")
     print("=" * 60)
+    print(f"\nTotal training steps: {model.num_timesteps}")
     print("\nДля визуализации:")
     print("  python visualize.py --model models/ppo_drone_nav --normalize models/vec_normalize.pkl")
 

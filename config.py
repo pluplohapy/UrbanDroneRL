@@ -19,15 +19,15 @@ VZ_MAX = 0.8
 YAW_RATE_MAX = 0.8
 
 # Raycasts
-N_RAYS = 16  # Вернул к 16 (было 32)
-RAY_LENGTH = 5.0  # Вернул к 5.0 (было 8.0)
+N_RAYS = 16
+RAY_LENGTH = 5.0  # Откат к 5.0
 
 # Reward parameters
 REWARD_SUCCESS = 500.0
-REWARD_CRASH = -100.0  # Вернул к -100 (было -200)
+REWARD_CRASH = -100.0
 REWARD_PROGRESS_SCALE = 6.0
-REWARD_PROXIMITY_THRESHOLD = 0.5  # Вернул к 0.5 (было 1.0)
-REWARD_PROXIMITY_SCALE = 8.0  # Вернул к 8.0 (было 15.0)
+REWARD_PROXIMITY_THRESHOLD = 1.0  # Компромисс: не 0.5, не 2.0
+REWARD_PROXIMITY_SCALE = 12.0  # Компромисс: не 8.0, не 20.0
 REWARD_STEP_PENALTY = 0.002
 REWARD_EXPLORATION_BONUS = 0.5  # Награда за посещение новой клетки
 EXPLORATION_GRID_SIZE = 1.0  # Размер клетки сетки в метрах
