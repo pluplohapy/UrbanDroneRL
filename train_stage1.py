@@ -8,7 +8,7 @@ os.environ['KMP_DUPLICATE_LIB_OK'] = 'TRUE'
 
 import numpy as np
 from stable_baselines3 import PPO
-from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
+from stable_baselines3.common.vec_env import SubprocVecEnv, VecNormalize
 from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.monitor import Monitor
 import torch
@@ -75,12 +75,22 @@ def main():
     print("STAGE 1 TRAINING - STATIC OBSTACLES", flush=True)
     print("=" * 60, flush=True)
 
-    # Check if Stage 0 checkpoint exists
-    stage0_model = "models/ppo_drone_nav.zip"
-    stage0_normalize = "models/vec_normalize.pkl"
+    # Check if Stage 1 checkpoint exists (для дообучения)
+    stage1_model = "models/ppo_drone_nav_stage1.zip"
+    stage1_normalize = "models/vec_normalize_stage1.pkl"
+
+    # Fallback to Stage 0 if Stage 1 doesn't exist
+    if os.path.exists(stage1_model):
+        stage0_model = stage1_model
+        stage0_normalize = stage1_normalize
+        print(f"\n[LOAD] Found Stage 1 checkpoint, will continue from it...")
+    else:
+        stage0_model = "models/ppo_drone_nav.zip"
+        stage0_normalize = "models/vec_normalize.pkl"
+        print(f"\n[LOAD] No Stage 1 checkpoint, starting from Stage 0...")
 
     if not os.path.exists(stage0_model):
-        print(f"\n✗ Stage 0 model not found at {stage0_model}")
+        print(f"\n✗ Model not found at {stage0_model}")
         print("Please train Stage 0 first with: python train.py")
         return
 
@@ -99,7 +109,7 @@ def main():
 
     # Create environments with Stage 1
     env_fns = [make_env(i, config.SEED) for i in range(config.N_ENVS)]
-    vec_env = DummyVecEnv(env_fns)
+    vec_env = SubprocVecEnv(env_fns)
 
     # Load VecNormalize stats from Stage 0
     vec_env = VecNormalize.load(stage0_normalize, vec_env)
@@ -121,7 +131,7 @@ def main():
 
     try:
         model.learn(
-            total_timesteps=1500000,  # 1.5M additional steps
+            total_timesteps=2400000,  # 3M additional steps (было 1.5M)
             callback=progress_callback,
             progress_bar=False,
             reset_num_timesteps=False

@@ -19,15 +19,15 @@ VZ_MAX = 0.8
 YAW_RATE_MAX = 0.8
 
 # Raycasts
-N_RAYS = 16
-RAY_LENGTH = 5.0
+N_RAYS = 16  # Вернул к 16 (было 32)
+RAY_LENGTH = 5.0  # Вернул к 5.0 (было 8.0)
 
 # Reward parameters
 REWARD_SUCCESS = 500.0
-REWARD_CRASH = -100.0
+REWARD_CRASH = -100.0  # Вернул к -100 (было -200)
 REWARD_PROGRESS_SCALE = 6.0
-REWARD_PROXIMITY_THRESHOLD = 0.5  # Увеличено с 0.4
-REWARD_PROXIMITY_SCALE = 8.0  # Увеличено с 1.2 - сильнее штраф за препятствия
+REWARD_PROXIMITY_THRESHOLD = 0.5  # Вернул к 0.5 (было 1.0)
+REWARD_PROXIMITY_SCALE = 8.0  # Вернул к 8.0 (было 15.0)
 REWARD_STEP_PENALTY = 0.002
 REWARD_EXPLORATION_BONUS = 0.5  # Награда за посещение новой клетки
 EXPLORATION_GRID_SIZE = 1.0  # Размер клетки сетки в метрах
@@ -48,7 +48,7 @@ STAGE2_DYN_FREQUENCY = (0.3, 1.0)
 
 # Training parameters
 SEED = 42
-N_ENVS = 4
+N_ENVS = 4  # Вернул к 4 (было 8)
 TOTAL_STEPS = 600_000
 EVAL_FREQ = 20_000
 SAVE_FREQ = 50_000

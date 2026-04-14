@@ -113,7 +113,8 @@ class NavAviary(BaseRLAviary):
 
     def _observationSpace(self):
         """
-        Define observation space: 28 features (было 27).
+        Define observation space: 28 features (вернул к 28).
+        3 (goal) + 1 (dist) + 3 (vel) + 1 (height) + 4 (prev_action) + 16 (raycasts) = 28
 
         Returns:
             Box space for 28-dimensional observation
@@ -123,6 +124,7 @@ class NavAviary(BaseRLAviary):
     def _computeObs(self):
         """
         Compute observation vector (28 features).
+        3 (goal) + 1 (dist) + 3 (vel) + 1 (height) + 4 (prev_action) + 16 (raycasts) = 28
 
         Returns:
             np.ndarray of shape (28,)

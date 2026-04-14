@@ -112,7 +112,7 @@ def main():
 
     try:
         model.learn(
-            total_timesteps=1500000,
+            total_timesteps=1000000,
             callback=progress_callback,
             progress_bar=False
         )

@@ -50,15 +50,7 @@ class Stage1Scenario(BaseScenario):
         # Store client_id
         self.client_id = client_id
 
-        # Remove old obstacles only if they exist and client matches
-        if self.obstacles and self.client_id is not None:
-            for obstacle in self.obstacles:
-                try:
-                    # Only remove if obstacle was created in this client
-                    if hasattr(obstacle, 'body_id') and obstacle.body_id is not None:
-                        obstacle.remove()
-                except:
-                    pass
+        # Clear obstacles list (p.resetSimulation() already removed them)
         self.obstacles = []
 
         # Generate start and goal positions
@@ -71,7 +63,7 @@ class Stage1Scenario(BaseScenario):
         )
 
         # Create obstacles
-        print(f"[Stage1] Creating {self.n_obstacles} obstacles...")
+        # print(f"[Stage1] Creating {self.n_obstacles} obstacles...")
         for i in range(self.n_obstacles):
             # Random radius and position
             radius = self.rng.uniform(
@@ -100,7 +92,7 @@ class Stage1Scenario(BaseScenario):
                         physics_client=client_id
                     )
                     self.obstacles.append(obstacle)
-                    print(f"[Stage1]   Obstacle {i+1}: pos=[{pos[0]:.2f}, {pos[1]:.2f}], radius={radius:.2f}, body_id={obstacle.body_id}")
+                    # print(f"[Stage1]   Obstacle {i+1}: pos=[{pos[0]:.2f}, {pos[1]:.2f}], radius={radius:.2f}, body_id={obstacle.body_id}")
                     break
 
         return start_pos, goal_pos
