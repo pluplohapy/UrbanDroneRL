@@ -30,6 +30,7 @@ class NavAviary(BaseRLAviary):
         self.prev_dist_to_goal = None
         self.control_step_counter = 0  # Renamed to avoid conflict with BaseRLAviary
         self.prev_action = np.zeros(4)
+        self.prev_prev_action = np.zeros(4)  # Для smoothness penalty
         self.visited_cells = set()  # For exploration bonus
 
         # Debug tracking
@@ -229,6 +230,28 @@ class NavAviary(BaseRLAviary):
         reward += reward_yaw_penalty
         if config.DEBUG_MODE and config.LOG_REWARD_COMPONENTS:
             self.reward_components['yaw_penalty'] = reward_yaw_penalty
+
+        # Heading reward - награда за правильное направление к цели
+        speed = np.linalg.norm(drone_vel)
+        if speed > 0.1:  # Только если дрон движется
+            vel_direction = drone_vel / speed
+            heading_alignment = np.dot(vel_direction, goal_direction)  # cos угла между скоростью и направлением к цели
+            reward_heading = config.REWARD_HEADING_SCALE * max(0, heading_alignment)
+            reward += reward_heading
+            if config.DEBUG_MODE and config.LOG_REWARD_COMPONENTS:
+                self.reward_components['heading'] = reward_heading
+        elif config.DEBUG_MODE and config.LOG_REWARD_COMPONENTS:
+            self.reward_components['heading'] = 0.0
+
+        # Action smoothness penalty - штраф за резкие изменения действий
+        if hasattr(self, 'prev_prev_action') and len(self.prev_prev_action) > 0:
+            action_change = np.linalg.norm(self.prev_action - self.prev_prev_action)
+            reward_smoothness = -config.REWARD_ACTION_SMOOTHNESS_SCALE * action_change
+            reward += reward_smoothness
+            if config.DEBUG_MODE and config.LOG_REWARD_COMPONENTS:
+                self.reward_components['smoothness'] = reward_smoothness
+        elif config.DEBUG_MODE and config.LOG_REWARD_COMPONENTS:
+            self.reward_components['smoothness'] = 0.0
 
         # Proximity bonus - УСИЛЕННАЯ награда за близость к цели
         reward_proximity = 15.0 * np.exp(-curr_dist)
@@ -437,6 +460,7 @@ class NavAviary(BaseRLAviary):
         self.control_step_counter = 0
         self.prev_dist_to_goal = np.linalg.norm(self.goal_pos - self.start_pos)
         self.prev_action = np.zeros(4)
+        self.prev_prev_action = np.zeros(4)  # Для smoothness penalty
         self.visited_cells = set()  # Reset exploration tracking
 
         # Reset debug tracking
@@ -463,6 +487,7 @@ class NavAviary(BaseRLAviary):
             observation, reward, terminated, truncated, info
         """
         # Store action
+        self.prev_prev_action = self.prev_action.copy()  # Сохраняем предыдущее действие
         self.prev_action = action.copy()
 
         # Track action for debug

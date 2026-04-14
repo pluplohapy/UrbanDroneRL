@@ -29,7 +29,7 @@ class ProgressCallback(BaseCallback):
 
         # Debug metrics storage
         if config.DEBUG_MODE:
-            self.reward_components = {k: [] for k in ['progress', 'velocity', 'proximity', 'obstacle', 'step_penalty', 'exploration', 'terminal', 'efficiency_bonus', 'yaw_penalty']}
+            self.reward_components = {k: [] for k in ['progress', 'velocity', 'proximity', 'obstacle', 'step_penalty', 'exploration', 'terminal', 'efficiency_bonus', 'yaw_penalty', 'heading', 'smoothness']}
             self.navigation_metrics = {'path_efficiency': [], 'avg_heading_error': [], 'avg_speed': []}
             self.episode_metrics = {'start_distance': [], 'min_goal_distance': [], 'closest_obstacle': [], 'n_near_misses': []}
             self.action_stats = {'action_mean': [], 'action_std': [], 'action_smoothness': []}
