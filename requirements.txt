@@ -4,3 +4,5 @@ tensorboard
 numpy
 pybullet
 gymnasium
+scipy
+matplotlib

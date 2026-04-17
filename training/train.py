@@ -1,31 +1,57 @@
 """
-Training script for drone navigation.
+Unified training script for drone navigation.
+Supports Stage 0 (empty) and Stage 1 (static obstacles with RRT* planner).
+
+Usage:
+    python training/train.py --stage 0                    # Train Stage 0
+    python training/train.py --stage 1                    # Train Stage 1 with RRT*
+    python training/train.py --stage 1 --no-planner       # Train Stage 1 without planner
+    python training/train.py --stage 0 --timesteps 1000000  # Custom timesteps
 """
 
 import os
+import sys
+import argparse
 import numpy as np
+import torch
+import warnings
 from stable_baselines3 import PPO
 from stable_baselines3.common.vec_env import SubprocVecEnv, VecNormalize
 from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.monitor import Monitor
-import torch
+
+# Suppress warnings
+warnings.filterwarnings('ignore')
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+
+# Add parent directory to path
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from envs.nav_aviary import NavAviary
+from envs.nav_aviary_planner import NavAviaryWithPlanner
 from scenarios.stage0_empty import Stage0Scenario
+from scenarios.stage1_static import Stage1Scenario
 import config
 
 
 class ProgressCallback(BaseCallback):
-    """Callback for displaying training progress with debug metrics."""
+    """Callback for displaying training progress."""
 
-    def __init__(self, verbose=0):
+    def __init__(self, stage, use_planner, verbose=0):
         super().__init__(verbose)
+        self.stage = stage
+        self.use_planner = use_planner
         self.episode_count = 0
         self.episode_rewards = []
         self.episode_successes = []
         self.episode_crashes = []
         self.episode_timeouts = []
         self.episode_lengths = []
+
+        # Planner metrics (only for Stage 1 with planner)
+        if use_planner:
+            self.planning_failures = []
+            self.n_waypoints = []
 
         # Debug metrics storage
         if config.DEBUG_MODE:
@@ -54,6 +80,13 @@ class ProgressCallback(BaseCallback):
                         self.episode_successes.append(1 if is_success else 0)
                         self.episode_crashes.append(1 if is_crash else 0)
                         self.episode_timeouts.append(1 if is_timeout else 0)
+
+                        # Planner metrics
+                        if self.use_planner:
+                            if "planning_failed" in info:
+                                self.planning_failures.append(1 if info["planning_failed"] else 0)
+                            if "n_waypoints" in info:
+                                self.n_waypoints.append(info["n_waypoints"])
 
                         # Collect debug metrics
                         if config.DEBUG_MODE:
@@ -102,7 +135,7 @@ class ProgressCallback(BaseCallback):
         return True
 
     def _print_progress(self):
-        """Print training progress with debug metrics."""
+        """Print training progress."""
         recent_rewards = self.episode_rewards[-10:]
         recent_successes = self.episode_successes[-min(50, len(self.episode_successes)):]
         recent_crashes = self.episode_crashes[-min(50, len(self.episode_crashes)):]
@@ -118,6 +151,19 @@ class ProgressCallback(BaseCallback):
         # Basic output
         print(f"Episode {self.episode_count:4d} | Steps: {self.num_timesteps:7d}")
         print(f"  Outcomes : S={success_rate:4.0%} | C={crash_rate:4.0%} | T={timeout_rate:4.0%}")
+
+        # Planner metrics
+        if self.use_planner and len(self.planning_failures) > 0:
+            recent_failures = self.planning_failures[-min(50, len(self.planning_failures)):]
+            failure_rate = np.mean(recent_failures)
+            print(f"  Planner  : failures={failure_rate:4.0%}", end="")
+
+            if len(self.n_waypoints) > 0:
+                recent_wp = self.n_waypoints[-min(50, len(self.n_waypoints)):]
+                avg_wp = np.mean(recent_wp)
+                print(f" | avg_waypoints={avg_wp:.1f}")
+            else:
+                print()
 
         if config.DEBUG_MODE:
             # Reward components
@@ -159,25 +205,146 @@ class ProgressCallback(BaseCallback):
         print()  # Empty line for readability
 
 
-def make_env(rank, seed=0):
+def make_env_stage0(rank, seed=0, use_planner=True):
+    """Create Stage 0 environment (empty arena)."""
     def _init():
         scenario = Stage0Scenario(seed=seed + rank)
-        env = NavAviary(scenario=scenario, gui=False)
+
+        if use_planner:
+            env = NavAviaryWithPlanner(
+                scenario=scenario,
+                gui=False,
+                use_planner=True,
+                replan_freq=0,
+                waypoint_threshold=config.WAYPOINT_THRESHOLD,  # 0.3м
+                planner_params={
+                    'max_iter': 500,  # Меньше итераций для пустой арены
+                    'step_size': 1.0,
+                    'goal_bias': 0.2,  # Выше bias - быстрее к цели
+                    'rewire_radius': 3.0,
+                    'verbose': 0  # Quiet mode
+                }
+            )
+        else:
+            env = NavAviary(
+                scenario=scenario,
+                gui=False
+            )
+
+        env = Monitor(env)
+        return env
+    return _init
+
+
+def make_env_stage1(rank, seed=0, use_planner=True):
+    """Create Stage 1 environment (static obstacles)."""
+    def _init():
+        scenario = Stage1Scenario(seed=seed + rank)
+
+        if use_planner:
+            env = NavAviaryWithPlanner(
+                scenario=scenario,
+                gui=False,
+                use_planner=True,
+                replan_freq=0,
+                waypoint_threshold=config.WAYPOINT_THRESHOLD,  # 0.3м
+                planner_params={
+                    'max_iter': 1000,
+                    'step_size': 1.0,
+                    'goal_bias': 0.15,
+                    'rewire_radius': 3.0,
+                    'verbose': 0  # Quiet mode
+                }
+            )
+        else:
+            env = NavAviary(
+                scenario=scenario,
+                gui=False
+            )
+
         env = Monitor(env)
         return env
     return _init
 
 
 def main():
-    print("=" * 60)
-    print("DRONE NAVIGATION TRAINING - STAGE 0")
-    print("=" * 60)
+    parser = argparse.ArgumentParser(description='Train drone navigation')
+    parser.add_argument('--stage', type=int, required=True, choices=[0, 1],
+                        help='Training stage: 0 (empty) or 1 (obstacles)')
+    parser.add_argument('--no-planner', action='store_true',
+                        help='Disable RRT* planner (enabled by default for all stages)')
+    parser.add_argument('--timesteps', type=int, default=None,
+                        help='Total training timesteps (default: 500k for Stage 0, 1.5M for Stage 1)')
+    parser.add_argument('--n-envs', type=int, default=config.N_ENVS,
+                        help=f'Number of parallel environments (default: {config.N_ENVS})')
+    parser.add_argument('--continue', dest='continue_training', action='store_true',
+                        help='Continue training from checkpoint')
 
-    # Check if Stage 0 checkpoint exists (для дообучения)
-    stage0_model = "models/ppo_drone_nav.zip"
-    stage0_normalize = "models/vec_normalize.pkl"
+    args = parser.parse_args()
 
-    continue_training = os.path.exists(stage0_model) and os.path.exists(stage0_normalize)
+    # Determine configuration
+    stage = args.stage
+    use_planner = not args.no_planner  # Планировщик по умолчанию для всех stages
+
+    # Set default timesteps
+    if args.timesteps is None:
+        timesteps = 500_000 if stage == 0 else 1_500_000
+    else:
+        timesteps = args.timesteps
+
+    # Model paths
+    if stage == 0:
+        if use_planner:
+            model_path = "models/ppo_drone_nav_stage0_planner"
+            normalize_path = "models/vec_normalize_stage0_planner.pkl"
+            log_name = "PPO_stage0_planner"
+        else:
+            model_path = "models/ppo_drone_nav_stage0"
+            normalize_path = "models/vec_normalize_stage0.pkl"
+            log_name = "PPO_stage0"
+    else:
+        if use_planner:
+            model_path = "models/ppo_drone_nav_stage1_planner"
+            normalize_path = "models/vec_normalize_stage1_planner.pkl"
+            log_name = "PPO_stage1_planner"
+        else:
+            model_path = "models/ppo_drone_nav_stage1"
+            normalize_path = "models/vec_normalize_stage1.pkl"
+            log_name = "PPO_stage1"
+
+    # Print configuration
+    print("=" * 60)
+    print(f"DRONE NAVIGATION TRAINING - STAGE {stage}")
+    print(f"Mode: {'WITH RRT* PLANNER' if use_planner else 'WITHOUT PLANNER'}")
+    print("=" * 60)
+    print(f"\n[CONFIG]")
+    print(f"  Stage: {stage}")
+    print(f"  Use planner: {use_planner}")
+    print(f"  Total timesteps: {timesteps:,}")
+    print(f"  Parallel envs: {args.n_envs}")
+    print(f"  Model path: {model_path}")
+
+    if use_planner:
+        print(f"\n[CONFIG] RRT* Planner Parameters:")
+        if stage == 0:
+            print(f"  max_iter: 500 (меньше для пустой арены)")
+            print(f"  step_size: 1.0m")
+            print(f"  goal_bias: 0.2 (выше для прямого пути)")
+            print(f"  rewire_radius: 3.0m")
+        else:
+            print(f"  max_iter: 1000")
+            print(f"  step_size: 1.0m")
+            print(f"  goal_bias: 0.15")
+            print(f"  rewire_radius: 3.0m")
+        print(f"  max_segment_length: 5.0m")
+
+    # Check for checkpoints
+    checkpoint_exists = os.path.exists(f"{model_path}.zip") and os.path.exists(normalize_path)
+
+    # Check for transfer learning (Stage 0 -> Stage 1)
+    stage0_model = "models/ppo_drone_nav_stage0_planner.zip"
+    stage0_normalize = "models/vec_normalize_stage0_planner.pkl"
+    can_transfer = (stage == 1) and os.path.exists(stage0_model) and os.path.exists(stage0_normalize)
 
     np.random.seed(config.SEED)
     torch.manual_seed(config.SEED)
@@ -185,30 +352,40 @@ def main():
     os.makedirs("logs", exist_ok=True)
     os.makedirs("models", exist_ok=True)
 
-    print(f"\n[CONFIG] Улучшенные параметры:")
-    print(f"  REWARD_STEP_PENALTY: {config.REWARD_STEP_PENALTY} (было 0.008)")
-    print(f"  REWARD_PROGRESS_SCALE: {config.REWARD_PROGRESS_SCALE} (было 3.0)")
-    print(f"  MAX_STEPS: {config.MAX_STEPS} (было 500)")
-    print(f"  + velocity_reward: награда за полёт к цели")
-
+    # Create environments
     print(f"\n[SETUP] Creating environments...")
-    env_fns = [make_env(i, config.SEED) for i in range(config.N_ENVS)]
+    if stage == 0:
+        env_fns = [make_env_stage0(i, config.SEED, use_planner) for i in range(args.n_envs)]
+    else:
+        env_fns = [make_env_stage1(i, config.SEED, use_planner) for i in range(args.n_envs)]
+
     vec_env = SubprocVecEnv(env_fns)
 
-    if continue_training:
-        print(f"\n[LOAD] Found Stage 0 checkpoint, continuing training...")
-        # Load VecNormalize stats
-        vec_env = VecNormalize.load(stage0_normalize, vec_env)
+    # Load or create model
+    if args.continue_training and checkpoint_exists:
+        print(f"\n[LOAD] Continuing training from checkpoint...")
+        vec_env = VecNormalize.load(normalize_path, vec_env)
         vec_env.training = True
         vec_env.norm_reward = True
         print("✓ VecNormalize stats loaded")
 
-        # Load model
-        model = PPO.load(stage0_model, env=vec_env)
-        print("✓ Stage 0 model loaded")
+        model = PPO.load(f"{model_path}.zip", env=vec_env)
+        print("✓ Model loaded")
         print(f"\nStarting from {model.num_timesteps} steps")
+
+    elif stage == 1 and can_transfer and not checkpoint_exists:
+        print(f"\n[LOAD] Using Stage 0 model for transfer learning...")
+        vec_env = VecNormalize.load(stage0_normalize, vec_env)
+        vec_env.training = True
+        vec_env.norm_reward = True
+        print("✓ VecNormalize stats loaded from Stage 0")
+
+        model = PPO.load(stage0_model, env=vec_env)
+        print("✓ Stage 0 model loaded for transfer learning")
+        print(f"\nStarting from {model.num_timesteps} steps")
+
     else:
-        print(f"\n[SETUP] No checkpoint found, starting from scratch...")
+        print(f"\n[SETUP] Starting from scratch...")
         vec_env = VecNormalize(
             vec_env,
             norm_obs=True,
@@ -223,42 +400,63 @@ def main():
             **config.PPO_PARAMS,
             env=vec_env,
             tensorboard_log="./logs/",
-            verbose=0,
+            verbose=1,
             device="auto"
         )
         print("✓ Model created")
 
-    progress_callback = ProgressCallback()
+    # Create callback
+    progress_callback = ProgressCallback(stage=stage, use_planner=use_planner)
 
     print(f"\n[TRAINING] Starting training...")
     print("-" * 60)
 
     try:
         model.learn(
-            total_timesteps=1500000,
+            total_timesteps=timesteps,
             callback=progress_callback,
             progress_bar=False,
-            reset_num_timesteps=False  # Продолжить счетчик шагов
+            reset_num_timesteps=False,
+            tb_log_name=log_name
         )
         print("\n" + "-" * 60)
         print("✓ Training completed")
 
     except KeyboardInterrupt:
-        print("\n\n[INFO] Training interrupted")
+        print("\n\n[INFO] Training interrupted by user")
 
+    # Save model
     print(f"\n[SAVE] Saving model...")
-    model.save("models/ppo_drone_nav")
-    vec_env.save("models/vec_normalize.pkl")
-    print("✓ Model saved")
+    model.save(model_path)
+    vec_env.save(normalize_path)
+    print(f"✓ Model saved to {model_path}.zip")
+    print(f"✓ Normalization saved to {normalize_path}")
 
     vec_env.close()
 
     print("\n" + "=" * 60)
     print("TRAINING FINISHED")
     print("=" * 60)
-    print(f"\nTotal training steps: {model.num_timesteps}")
-    print("\nДля визуализации:")
-    print("  python visualize.py --model models/ppo_drone_nav --normalize models/vec_normalize.pkl")
+    print(f"\nTotal training steps: {model.num_timesteps:,}")
+
+    # Next steps
+    print("\n[NEXT STEPS]")
+    if stage == 0:
+        print("  1. Visualize Stage 0:")
+        if use_planner:
+            print(f"     python visualize_planner.py --model {model_path}")
+        else:
+            print(f"     python visualize.py --model {model_path}")
+        print("\n  2. Train Stage 1 with planner:")
+        print("     python training/train.py --stage 1")
+    else:
+        print("  1. Visualize Stage 1:")
+        if use_planner:
+            print(f"     python visualize_planner.py --model {model_path}")
+        else:
+            print(f"     python visualize.py --model {model_path}")
+        print("\n  2. Compare with/without planner:")
+        print("     python compare_planner.py")
 
 
 if __name__ == "__main__":
