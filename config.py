@@ -9,9 +9,9 @@ ARENA_SIZE_Y = 15.0
 ARENA_HEIGHT = 5.0
 MIN_START_GOAL_DIST = 8.0
 MIN_CLEARANCE = 1.0
-SUCCESS_DIST = 0.3  # Строгий threshold как в DRL-DroneNavigation
-WAYPOINT_THRESHOLD = 0.3  # Радиус достижения waypoint
-MAX_STEPS = 750
+SUCCESS_DIST = 0.4  # Реальная цель - чуть мягче чем waypoints (0.3м)
+WAYPOINT_THRESHOLD = 0.3  # Радиус достижения waypoint (строгий)
+MAX_STEPS = 1200  # Увеличено с 750: дистанции в 2 раза больше чем у DRL-DroneNavigation (8-15м vs 3-5м)
 
 # Control parameters (velocity control)
 VX_MAX = 1.5
@@ -26,7 +26,7 @@ RAY_LENGTH = 5.0  # Откат к 5.0
 # Reward parameters
 REWARD_SUCCESS = 500
 REWARD_CRASH = -100.0
-REWARD_WAYPOINT = 50.0  # Награда за достижение промежуточного waypoint (как у DRL-DroneNavigation: 75/25=3, у нас 50)
+REWARD_WAYPOINT = 150.0  # Увеличено с 50: соотношение 150/500=30% (у DRL-DroneNavigation: 75/200=37.5%)
 REWARD_PROGRESS_SCALE = 10.0 # награда за сближение
 REWARD_VELOCITY_SCALE = 4.0  # Увеличено с 2.0 - сильнее награждаем за полет к цели
 REWARD_HEADING_SCALE = 5.0  # Увеличено с 2.0 - сильнее награждаем за правильное направление

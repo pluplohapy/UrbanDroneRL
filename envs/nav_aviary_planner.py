@@ -151,7 +151,20 @@ class NavAviaryWithPlanner(NavAviary):
 
         # Get current target (waypoint or goal)
         if self.use_planner and len(self.waypoints) > 0:
-            current_target = self.waypoints[self.current_waypoint_idx]
+            # Если достигли последнего waypoint, переключаемся на реальную цель
+            if self.current_waypoint_idx >= len(self.waypoints) - 1:
+                # Проверяем достигли ли последний waypoint
+                last_waypoint = self.waypoints[-1]
+                dist_to_last_wp = np.linalg.norm(last_waypoint - drone_pos)
+                if dist_to_last_wp < self.waypoint_threshold:
+                    # Последний waypoint достигнут - переключаемся на реальную цель
+                    current_target = self.goal_pos
+                else:
+                    # Еще летим к последнему waypoint
+                    current_target = self.waypoints[self.current_waypoint_idx]
+            else:
+                # Летим к промежуточному waypoint
+                current_target = self.waypoints[self.current_waypoint_idx]
         else:
             current_target = self.goal_pos
 
@@ -352,10 +365,19 @@ class NavAviaryWithPlanner(NavAviary):
         dt = 1.0 / self.CTRL_FREQ
         self.scenario.update_dynamic_obstacles(dt)
 
-        # Execute action through parent class
-        drone_pos = self._getDroneStateVector(0)[:3]
+        # Convert normalized action to actual velocities
+        vx = action[0] * config.VX_MAX
+        vy = action[1] * config.VY_MAX
+        vz = action[2] * config.VZ_MAX
+        yaw_rate = action[3] * config.YAW_RATE_MAX
 
-        # Check waypoint reached
+        # Execute action through parent class
+        obs, reward, terminated, truncated, info = super(NavAviary, self).step(
+            np.array([[vx, vy, vz, yaw_rate]])
+        )
+
+        # Check waypoint reached AFTER getting reward
+        drone_pos = self._getDroneStateVector(0)[:3]
         if self.use_planner and len(self.waypoints) > 0:
             current_waypoint = self.waypoints[self.current_waypoint_idx]
             dist_to_waypoint = np.linalg.norm(drone_pos - current_waypoint)
@@ -370,17 +392,6 @@ class NavAviaryWithPlanner(NavAviary):
                     # Update prev_dist for new waypoint
                     new_waypoint = self.waypoints[self.current_waypoint_idx]
                     self.prev_dist_to_goal = np.linalg.norm(new_waypoint - drone_pos)
-
-        # Convert normalized action to actual velocities
-        vx = action[0] * config.VX_MAX
-        vy = action[1] * config.VY_MAX
-        vz = action[2] * config.VZ_MAX
-        yaw_rate = action[3] * config.YAW_RATE_MAX
-
-        # Execute action through parent class
-        obs, reward, terminated, truncated, info = super(NavAviary, self).step(
-            np.array([[vx, vy, vz, yaw_rate]])
-        )
 
         # Track trajectory for debug
         if config.DEBUG_MODE and config.LOG_NAVIGATION_METRICS:
