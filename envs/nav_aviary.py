@@ -240,21 +240,10 @@ class NavAviary(BaseRLAviary):
         reward_velocity = self._log_reward_component('velocity', config.REWARD_VELOCITY_SCALE * max(0, velocity_towards_goal))
         reward += reward_velocity
 
-        # Yaw penalty - штраф за избыточное вращение (только когда уже смотрим на цель)
-        # Вычисляем направление "вперед" дрона в world frame
-        rot_matrix = np.array(p.getMatrixFromQuaternion(drone_quat)).reshape(3, 3)
-        forward_direction = rot_matrix[:, 0]  # Forward axis в body frame
-
-        # Проверяем, смотрим ли мы уже на цель
-        alignment_to_goal = np.dot(forward_direction, goal_direction)
-
-        # Штраф только если уже смотрим на цель (alignment > 0.8) но продолжаем вращаться
-        if alignment_to_goal > 0.8:
-            yaw_action = abs(self.prev_action[3]) if len(self.prev_action) > 3 else 0
-            reward_yaw_penalty = self._log_reward_component('yaw_penalty', -config.REWARD_YAW_PENALTY_SCALE * yaw_action)
-            reward += reward_yaw_penalty
-        else:
-            self._log_reward_component('yaw_penalty', 0.0)
+        # Yaw penalty - квадратичный штраф за избыточное вращение (всегда применяется)
+        yaw_action = abs(self.prev_action[3]) if len(self.prev_action) > 3 else 0
+        reward_yaw_penalty = self._log_reward_component('yaw_penalty', -config.REWARD_YAW_PENALTY_SCALE * (yaw_action ** 2))
+        reward += reward_yaw_penalty
 
         # Heading reward - награда за правильное направление к цели
         speed = np.linalg.norm(drone_vel)
@@ -348,8 +337,8 @@ class NavAviary(BaseRLAviary):
                 if alignment > 0:  # Flying towards goal (angle < 90°)
                     self.episode_goal_seeking_steps += 1
 
-            # Track yaw rate
-            yaw_rate = abs(self.prev_action[3]) if len(self.prev_action) > 3 else 0
+            # Track yaw rate (convert normalized action to real yaw_rate in rad/s)
+            yaw_rate = abs(self.prev_action[3]) * config.YAW_RATE_MAX if len(self.prev_action) > 3 else 0
             self.episode_yaw_rates.append(yaw_rate)
 
             self.episode_total_steps += 1
