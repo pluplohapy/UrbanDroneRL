@@ -32,10 +32,10 @@ REWARD_SUCCESS = 500
 REWARD_CRASH = -500.0  # Сбалансировано с success (было -100)
 REWARD_WAYPOINT = 50.0  # Уменьшено с 150: соотношение 50/500=10% (разумнее чем 30%)
 REWARD_PROGRESS_SCALE = 10.0 # награда за сближение
-REWARD_VELOCITY_SCALE = 4.0  # Увеличено с 2.0 - сильнее награждаем за полет к цели
-REWARD_HEADING_SCALE = 5.0  # Увеличено с 2.0 - сильнее награждаем за правильное направление
+REWARD_VELOCITY_SCALE = 8.0  # Увеличено с 4.0 - FIX: проблема медленной скорости (0.57 м/с)
+REWARD_HEADING_SCALE = 10.0  # Увеличено с 5.0 - FIX: проблема высокого heading error (50°)
 REWARD_ACTION_SMOOTHNESS_SCALE = 0.5  # Штраф за резкие изменения действий
-REWARD_YAW_PENALTY_SCALE = 0.5  # Штраф за избыточное вращение
+REWARD_YAW_PENALTY_SCALE = 2.0  # Увеличено с 0.5 - FIX: проблема spinning (95-98%)
 REWARD_PROXIMITY_THRESHOLD = 3.0  # Расширенная зона для раннего притяжения
 REWARD_PROXIMITY_SCALE = 5.0  # Уменьшено с 20.0 - используется в proximity reward
 REWARD_STEP_PENALTY = 0.0015
