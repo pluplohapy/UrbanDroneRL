@@ -82,18 +82,43 @@ class Stage1Scenario(BaseScenario):
                 dist_to_start = np.linalg.norm(pos[:2] - start_pos[:2])
                 dist_to_goal = np.linalg.norm(pos[:2] - goal_pos[:2])
 
-                if (dist_to_start > config.MIN_CLEARANCE + radius and
-                    dist_to_goal > config.MIN_CLEARANCE + radius):
-                    # Valid position found
-                    obstacle = StaticObstacle(
-                        position=pos,
-                        radius=radius,
-                        height=config.ARENA_HEIGHT,  # Full height cylinder
-                        physics_client=client_id
-                    )
-                    self.obstacles.append(obstacle)
-                    # print(f"[Stage1]   Obstacle {i+1}: pos=[{pos[0]:.2f}, {pos[1]:.2f}], radius={radius:.2f}, body_id={obstacle.body_id}")
-                    break
+                if (dist_to_start < config.MIN_CLEARANCE + radius or
+                    dist_to_goal < config.MIN_CLEARANCE + radius):
+                    continue  # Too close to start or goal
+
+                # Check if obstacle blocks direct path from start to goal
+                line_vec = goal_pos[:2] - start_pos[:2]
+                line_length = np.linalg.norm(line_vec)
+
+                if line_length > 0:
+                    line_dir = line_vec / line_length
+
+                    # Vector from start to obstacle
+                    start_to_obs = pos[:2] - start_pos[:2]
+
+                    # Project onto line
+                    projection = np.dot(start_to_obs, line_dir)
+
+                    # Check if projection is within line segment
+                    if 0 < projection < line_length:
+                        # Find perpendicular distance to line
+                        perpendicular = start_to_obs - projection * line_dir
+                        dist_to_line = np.linalg.norm(perpendicular)
+
+                        # If too close to direct path, skip this position
+                        if dist_to_line < config.MIN_CLEARANCE + radius:
+                            continue  # Blocks direct path
+
+                # Valid position found
+                obstacle = StaticObstacle(
+                    position=pos,
+                    radius=radius,
+                    height=config.ARENA_HEIGHT,  # Full height cylinder
+                    physics_client=client_id
+                )
+                self.obstacles.append(obstacle)
+                # print(f"[Stage1]   Obstacle {i+1}: pos=[{pos[0]:.2f}, {pos[1]:.2f}], radius={radius:.2f}, body_id={obstacle.body_id}")
+                break
 
         return start_pos, goal_pos
 

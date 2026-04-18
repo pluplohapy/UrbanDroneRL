@@ -61,6 +61,23 @@ class ProgressCallback(BaseCallback):
             self.action_stats = {'action_mean': [], 'action_std': [], 'action_smoothness': []}
             self.timeout_metrics = {'final_dist': [], 'min_dist': [], 'start_dist': []}
 
+            # Extended episode metrics
+            if config.LOG_EXTENDED_EPISODE_METRICS:
+                self.extended_metrics = {
+                    'avg_clearance': [],
+                    'hovering_time': [],
+                    'goal_seeking_ratio': [],
+                    'spinning_time': []
+                }
+
+            # Path following metrics (for planner)
+            if use_planner and config.LOG_PATH_FOLLOWING_METRICS:
+                self.path_following_metrics = {
+                    'avg_cross_track_error': [],
+                    'max_cross_track_error': [],
+                    'path_following_score': []
+                }
+
     def _on_step(self) -> bool:
         if len(self.locals.get("infos", [])) > 0:
             for info in self.locals["infos"]:
@@ -129,6 +146,26 @@ class ProgressCallback(BaseCallback):
                                 self.timeout_metrics['min_dist'].append(info.get('min_goal_distance', 0))
                                 self.timeout_metrics['start_dist'].append(info.get('start_distance', 0))
 
+                            # Extended episode metrics
+                            if config.LOG_EXTENDED_EPISODE_METRICS:
+                                if 'avg_clearance' in info:
+                                    self.extended_metrics['avg_clearance'].append(info['avg_clearance'])
+                                if 'hovering_time' in info:
+                                    self.extended_metrics['hovering_time'].append(info['hovering_time'])
+                                if 'goal_seeking_ratio' in info:
+                                    self.extended_metrics['goal_seeking_ratio'].append(info['goal_seeking_ratio'])
+                                if 'spinning_time' in info:
+                                    self.extended_metrics['spinning_time'].append(info['spinning_time'])
+
+                            # Path following metrics
+                            if self.use_planner and config.LOG_PATH_FOLLOWING_METRICS:
+                                if 'avg_cross_track_error' in info:
+                                    self.path_following_metrics['avg_cross_track_error'].append(info['avg_cross_track_error'])
+                                if 'max_cross_track_error' in info:
+                                    self.path_following_metrics['max_cross_track_error'].append(info['max_cross_track_error'])
+                                if 'path_following_score' in info:
+                                    self.path_following_metrics['path_following_score'].append(info['path_following_score'])
+
                     if self.episode_count % config.LOG_INTERVAL_EPISODES == 0:
                         self._print_progress()
 
@@ -189,7 +226,29 @@ class ProgressCallback(BaseCallback):
             if config.LOG_TIMEOUT_ANALYSIS and len(self.timeout_metrics['final_dist']) > 0:
                 final = np.mean(self.timeout_metrics['final_dist'])
                 min_d = np.mean(self.timeout_metrics['min_dist'])
-                print(f"  Timeouts : final_dist={final:.1f}m | min_dist={min_d:.1f}m")
+
+                # Calculate timeout_near_goal and timeout_stuck
+                near_goal_count = sum(1 for d in self.timeout_metrics['min_dist'] if d < config.TIMEOUT_NEAR_GOAL_THRESHOLD)
+                near_goal_pct = near_goal_count / len(self.timeout_metrics['min_dist']) if len(self.timeout_metrics['min_dist']) > 0 else 0
+
+                print(f"  Timeouts : final_dist={final:.1f}m | min_dist={min_d:.1f}m | near_goal={near_goal_pct:.0%}")
+
+            # Extended episode metrics
+            if config.LOG_EXTENDED_EPISODE_METRICS and len(self.extended_metrics['avg_clearance']) > 0:
+                recent_n = min(50, len(self.extended_metrics['avg_clearance']))
+                clearance = np.mean(self.extended_metrics['avg_clearance'][-recent_n:])
+                hovering = np.mean(self.extended_metrics['hovering_time'][-recent_n:]) if len(self.extended_metrics['hovering_time']) > 0 else 0
+                goal_seek = np.mean(self.extended_metrics['goal_seeking_ratio'][-recent_n:]) if len(self.extended_metrics['goal_seeking_ratio']) > 0 else 0
+                spinning = np.mean(self.extended_metrics['spinning_time'][-recent_n:]) if len(self.extended_metrics['spinning_time']) > 0 else 0
+                print(f"  Behavior : clearance={clearance:.2f}m | hovering={hovering:.0%} | goal_seek={goal_seek:.0%} | spinning={spinning:.0%}")
+
+            # Path following metrics
+            if self.use_planner and config.LOG_PATH_FOLLOWING_METRICS and len(self.path_following_metrics['avg_cross_track_error']) > 0:
+                recent_n = min(50, len(self.path_following_metrics['avg_cross_track_error']))
+                avg_cte = np.mean(self.path_following_metrics['avg_cross_track_error'][-recent_n:])
+                max_cte = np.mean(self.path_following_metrics['max_cross_track_error'][-recent_n:])
+                pf_score = np.mean(self.path_following_metrics['path_following_score'][-recent_n:])
+                print(f"  PathFollow: avg_CTE={avg_cte:.2f}m | max_CTE={max_cte:.2f}m | score={pf_score:.0%}")
 
             # Action stats
             if config.LOG_ACTION_STATS and len(self.action_stats['action_smoothness']) > 0:
@@ -279,8 +338,15 @@ def main():
                         help=f'Number of parallel environments (default: {config.N_ENVS})')
     parser.add_argument('--continue', dest='continue_training', action='store_true',
                         help='Continue training from checkpoint')
+    parser.add_argument('--debug', action='store_true',
+                        help='Enable debug mode (detailed logging and metrics)')
 
     args = parser.parse_args()
+
+    # Enable debug mode if requested
+    if args.debug:
+        config.DEBUG_MODE = True
+        print("[DEBUG] Debug mode enabled")
 
     # Determine configuration
     stage = args.stage

@@ -90,6 +90,10 @@ class NavAviaryWithPlanner(NavAviary):
 
         self.steps_since_replan = 0
 
+        # Initialize path following metrics tracking
+        if config.DEBUG_MODE and config.LOG_PATH_FOLLOWING_METRICS:
+            self.cross_track_errors = []  # List of cross-track errors
+
         # Add planning info
         info['planning_failed'] = self.planning_failed
         info['n_waypoints'] = len(self.waypoints)
@@ -237,54 +241,53 @@ class NavAviaryWithPlanner(NavAviary):
 
         # Progress reward (towards current waypoint)
         progress = self.prev_dist_to_goal - curr_dist
-        reward_progress = config.REWARD_PROGRESS_SCALE * progress
+        reward_progress = self._log_reward_component('progress', config.REWARD_PROGRESS_SCALE * progress)
         reward = reward_progress
-        if config.DEBUG_MODE and config.LOG_REWARD_COMPONENTS:
-            self.reward_components['progress'] = reward_progress
 
         # Velocity reward
         target_world = current_target - drone_pos
         target_direction = target_world / (np.linalg.norm(target_world) + 1e-6)
         velocity_towards_target = np.dot(drone_vel, target_direction)
-        reward_velocity = config.REWARD_VELOCITY_SCALE * max(0, velocity_towards_target)
+        reward_velocity = self._log_reward_component('velocity', config.REWARD_VELOCITY_SCALE * max(0, velocity_towards_target))
         reward += reward_velocity
-        if config.DEBUG_MODE and config.LOG_REWARD_COMPONENTS:
-            self.reward_components['velocity'] = reward_velocity
 
-        # Yaw penalty
-        yaw_action = abs(self.prev_action[3]) if len(self.prev_action) > 3 else 0
-        reward_yaw_penalty = -config.REWARD_YAW_PENALTY_SCALE * yaw_action
-        reward += reward_yaw_penalty
-        if config.DEBUG_MODE and config.LOG_REWARD_COMPONENTS:
-            self.reward_components['yaw_penalty'] = reward_yaw_penalty
+        # Yaw penalty - штраф за избыточное вращение (только когда уже смотрим на цель)
+        # Вычисляем направление "вперед" дрона в world frame
+        rot_matrix = np.array(p.getMatrixFromQuaternion(drone_quat)).reshape(3, 3)
+        forward_direction = rot_matrix[:, 0]  # Forward axis в body frame
+
+        # Проверяем, смотрим ли мы уже на цель
+        alignment_to_goal = np.dot(forward_direction, target_direction)
+
+        # Штраф только если уже смотрим на цель (alignment > 0.8) но продолжаем вращаться
+        if alignment_to_goal > 0.8:
+            yaw_action = abs(self.prev_action[3]) if len(self.prev_action) > 3 else 0
+            reward_yaw_penalty = self._log_reward_component('yaw_penalty', -config.REWARD_YAW_PENALTY_SCALE * yaw_action)
+            reward += reward_yaw_penalty
+        else:
+            self._log_reward_component('yaw_penalty', 0.0)
 
         # Heading reward
         speed = np.linalg.norm(drone_vel)
         if speed > 0.1:
             vel_direction = drone_vel / speed
             heading_alignment = np.dot(vel_direction, target_direction)
-            reward_heading = config.REWARD_HEADING_SCALE * max(0, heading_alignment)
+            reward_heading = self._log_reward_component('heading', config.REWARD_HEADING_SCALE * max(0, heading_alignment))
             reward += reward_heading
-            if config.DEBUG_MODE and config.LOG_REWARD_COMPONENTS:
-                self.reward_components['heading'] = reward_heading
-        elif config.DEBUG_MODE and config.LOG_REWARD_COMPONENTS:
-            self.reward_components['heading'] = 0.0
+        else:
+            self._log_reward_component('heading', 0.0)
 
         # Action smoothness penalty
         if hasattr(self, 'prev_prev_action') and len(self.prev_prev_action) > 0:
             action_change = np.linalg.norm(self.prev_action - self.prev_prev_action)
-            reward_smoothness = -config.REWARD_ACTION_SMOOTHNESS_SCALE * action_change
+            reward_smoothness = self._log_reward_component('smoothness', -config.REWARD_ACTION_SMOOTHNESS_SCALE * action_change)
             reward += reward_smoothness
-            if config.DEBUG_MODE and config.LOG_REWARD_COMPONENTS:
-                self.reward_components['smoothness'] = reward_smoothness
-        elif config.DEBUG_MODE and config.LOG_REWARD_COMPONENTS:
-            self.reward_components['smoothness'] = 0.0
+        else:
+            self._log_reward_component('smoothness', 0.0)
 
-        # Proximity bonus
-        reward_proximity = 15.0 * np.exp(-curr_dist)
+        # Proximity bonus - награда за близость к цели
+        reward_proximity = self._log_reward_component('proximity', config.REWARD_PROXIMITY_SCALE * np.exp(-curr_dist))
         reward += reward_proximity
-        if config.DEBUG_MODE and config.LOG_REWARD_COMPONENTS:
-            self.reward_components['proximity'] = reward_proximity
 
         # Update previous distance
         self.prev_dist_to_goal = curr_dist
@@ -295,13 +298,12 @@ class NavAviaryWithPlanner(NavAviary):
         grid_z = int(drone_pos[2] / config.EXPLORATION_GRID_SIZE)
         grid_key = (grid_x, grid_y, grid_z)
 
-        reward_exploration = 0.0
         if grid_key not in self.visited_cells:
             self.visited_cells.add(grid_key)
-            reward_exploration = config.REWARD_EXPLORATION_BONUS
+            reward_exploration = self._log_reward_component('exploration', config.REWARD_EXPLORATION_BONUS)
             reward += reward_exploration
-        if config.DEBUG_MODE and config.LOG_REWARD_COMPONENTS:
-            self.reward_components['exploration'] = reward_exploration
+        else:
+            self._log_reward_component('exploration', 0.0)
 
         # Proximity penalty based on raycasts
         raycasts = self.raycast_sensor.cast_rays(drone_pos, drone_quat, self.CLIENT)
@@ -313,19 +315,16 @@ class NavAviaryWithPlanner(NavAviary):
             if min_dist < config.MIN_CLEARANCE:
                 self.episode_near_misses += 1
 
-        reward_obstacle = 0.0
         if min_dist < config.REWARD_PROXIMITY_THRESHOLD:
             penalty = config.REWARD_PROXIMITY_SCALE * np.exp(-min_dist)
-            reward_obstacle = -penalty
+            reward_obstacle = self._log_reward_component('obstacle', -penalty)
             reward += reward_obstacle
-        if config.DEBUG_MODE and config.LOG_REWARD_COMPONENTS:
-            self.reward_components['obstacle'] = reward_obstacle
+        else:
+            self._log_reward_component('obstacle', 0.0)
 
         # Step penalty
-        reward_step = -config.REWARD_STEP_PENALTY
+        reward_step = self._log_reward_component('step_penalty', -config.REWARD_STEP_PENALTY)
         reward += reward_step
-        if config.DEBUG_MODE and config.LOG_REWARD_COMPONENTS:
-            self.reward_components['step_penalty'] = reward_step
 
         # Track navigation metrics
         if config.DEBUG_MODE and config.LOG_NAVIGATION_METRICS:
@@ -340,6 +339,26 @@ class NavAviaryWithPlanner(NavAviary):
         if config.DEBUG_MODE and config.LOG_EPISODE_METRICS:
             dist_to_final_goal = np.linalg.norm(self.goal_pos - drone_pos)
             self.episode_min_goal_dist = min(self.episode_min_goal_dist, dist_to_final_goal)
+
+        # Track extended episode metrics
+        if config.DEBUG_MODE and config.LOG_EXTENDED_EPISODE_METRICS:
+            # Track clearance (distance to nearest obstacle)
+            self.episode_clearances.append(min_dist)
+
+            # Track goal seeking (is velocity pointing towards final goal?)
+            final_goal_direction = (self.goal_pos - drone_pos) / (np.linalg.norm(self.goal_pos - drone_pos) + 1e-6)
+            speed = np.linalg.norm(drone_vel)
+            if speed > 0.1:
+                vel_direction = drone_vel / speed
+                alignment = np.dot(vel_direction, final_goal_direction)
+                if alignment > 0:  # Flying towards final goal (angle < 90°)
+                    self.episode_goal_seeking_steps += 1
+
+            # Track yaw rate
+            yaw_rate = abs(self.prev_action[3]) if len(self.prev_action) > 3 else 0
+            self.episode_yaw_rates.append(yaw_rate)
+
+            self.episode_total_steps += 1
 
         return reward
 
@@ -365,15 +384,10 @@ class NavAviaryWithPlanner(NavAviary):
         dt = 1.0 / self.CTRL_FREQ
         self.scenario.update_dynamic_obstacles(dt)
 
-        # Convert normalized action to actual velocities
-        vx = action[0] * config.VX_MAX
-        vy = action[1] * config.VY_MAX
-        vz = action[2] * config.VZ_MAX
-        yaw_rate = action[3] * config.YAW_RATE_MAX
-
         # Execute action through parent class
+        # IMPORTANT: Pass normalized action [-1, 1], _preprocessAction() will handle scaling
         obs, reward, terminated, truncated, info = super(NavAviary, self).step(
-            np.array([[vx, vy, vz, yaw_rate]])
+            np.array([action])
         )
 
         # Check waypoint reached AFTER getting reward
@@ -389,7 +403,8 @@ class NavAviaryWithPlanner(NavAviary):
                     reward += config.REWARD_WAYPOINT
                     self.current_waypoint_idx += 1
 
-                    # Update prev_dist for new waypoint
+                    # IMPORTANT: Update prev_dist for new waypoint to reset progress tracking
+                    # This is correct - we need to reset distance when switching to next waypoint
                     new_waypoint = self.waypoints[self.current_waypoint_idx]
                     self.prev_dist_to_goal = np.linalg.norm(new_waypoint - drone_pos)
 
@@ -397,6 +412,12 @@ class NavAviaryWithPlanner(NavAviary):
         if config.DEBUG_MODE and config.LOG_NAVIGATION_METRICS:
             drone_pos = self._getDroneStateVector(0)[:3]
             self.episode_trajectory.append(drone_pos.copy())
+
+        # Track cross-track error (deviation from RRT* path)
+        if config.DEBUG_MODE and config.LOG_PATH_FOLLOWING_METRICS and self.use_planner and len(self.waypoints) > 1:
+            drone_pos = self._getDroneStateVector(0)[:3]
+            cte = self._compute_cross_track_error(drone_pos)
+            self.cross_track_errors.append(cte)
 
         # Increment control step counter
         self.control_step_counter += 1
@@ -448,4 +469,59 @@ class NavAviaryWithPlanner(NavAviary):
         info['n_waypoints'] = len(self.waypoints)
         info['planning_failed'] = self.planning_failed
 
+        # Add path following metrics
+        if config.DEBUG_MODE and config.LOG_PATH_FOLLOWING_METRICS and len(self.cross_track_errors) > 0:
+            info['avg_cross_track_error'] = np.mean(self.cross_track_errors)
+            info['max_cross_track_error'] = np.max(self.cross_track_errors)
+            # Path following score: % of time when CTE < threshold
+            within_threshold = np.sum(np.array(self.cross_track_errors) < config.CROSS_TRACK_ERROR_THRESHOLD)
+            info['path_following_score'] = within_threshold / len(self.cross_track_errors)
+
         return obs, reward, terminated, truncated, info
+
+    def _compute_cross_track_error(self, drone_pos: np.ndarray) -> float:
+        """
+        Compute cross-track error: perpendicular distance from drone to nearest path segment.
+
+        Args:
+            drone_pos: Current drone position [x, y, z]
+
+        Returns:
+            Cross-track error in meters
+        """
+        if len(self.waypoints) < 2:
+            return 0.0
+
+        # Find the relevant path segment (from previous waypoint to current waypoint)
+        if self.current_waypoint_idx == 0:
+            # Before first waypoint: segment from start to first waypoint
+            p1 = self.start_pos
+            p2 = self.waypoints[0]
+        else:
+            # Between waypoints: segment from previous to current
+            p1 = self.waypoints[self.current_waypoint_idx - 1]
+            p2 = self.waypoints[self.current_waypoint_idx]
+
+        # Vector from p1 to p2 (path segment)
+        segment = p2 - p1
+        segment_length = np.linalg.norm(segment)
+
+        if segment_length < 1e-6:
+            # Degenerate segment, return distance to waypoint
+            return np.linalg.norm(drone_pos - p2)
+
+        # Vector from p1 to drone
+        p1_to_drone = drone_pos - p1
+
+        # Project drone position onto the line segment
+        # t = how far along the segment (0 = at p1, 1 = at p2)
+        t = np.dot(p1_to_drone, segment) / (segment_length ** 2)
+        t = np.clip(t, 0, 1)  # Clamp to segment
+
+        # Closest point on segment
+        closest_point = p1 + t * segment
+
+        # Cross-track error is distance from drone to closest point
+        cte = np.linalg.norm(drone_pos - closest_point)
+
+        return cte

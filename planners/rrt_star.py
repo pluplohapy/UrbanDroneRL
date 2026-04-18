@@ -170,8 +170,8 @@ class RRTStarPlanner:
             best_parent.children.append(new_node)
             self.nodes.append(new_node)
 
-            # Rebuild KD-tree (every 10 iterations for efficiency)
-            if len(self.nodes) % 10 == 0:
+            # Rebuild KD-tree (every 50 iterations for efficiency, was 10)
+            if len(self.nodes) % 50 == 0:
                 self._rebuild_kdtree()
 
             # 8. Rewire neighbors

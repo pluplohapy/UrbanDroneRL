@@ -43,6 +43,12 @@ class NavAviary(BaseRLAviary):
         self.episode_min_goal_dist = float('inf')  # Closest to goal
         self.reward_components = {}  # Dict of reward components
 
+        # Extended episode metrics
+        self.episode_clearances = []  # List of clearances to nearest obstacle
+        self.episode_goal_seeking_steps = 0  # Steps when flying towards goal
+        self.episode_total_steps = 0  # Total steps for ratio calculation
+        self.episode_yaw_rates = []  # List of yaw rates
+
         # Initialize raycast sensor
         self.raycast_sensor = RaycastSensor(ray_length=config.RAY_LENGTH)
 
@@ -52,8 +58,8 @@ class NavAviary(BaseRLAviary):
             num_drones=1,
             neighbourhood_radius=np.inf,
             physics=physics,
-            pyb_freq=240,
-            ctrl_freq=30,
+            pyb_freq=config.PYB_FREQ,
+            ctrl_freq=config.CTRL_FREQ,
             gui=gui,
             record=False,
             obs=ObservationType.KIN,
@@ -191,6 +197,21 @@ class NavAviary(BaseRLAviary):
 
         return obs.astype(np.float32)
 
+    def _log_reward_component(self, name: str, value: float) -> float:
+        """
+        Helper method to log reward component if debug mode is enabled.
+
+        Args:
+            name: Component name
+            value: Component value
+
+        Returns:
+            The same value (for chaining)
+        """
+        if config.DEBUG_MODE and config.LOG_REWARD_COMPONENTS:
+            self.reward_components[name] = value
+        return value
+
     def _computeReward(self):
         """
         Compute reward based on progress and safety.
@@ -209,55 +230,53 @@ class NavAviary(BaseRLAviary):
 
         # Progress reward
         progress = self.prev_dist_to_goal - curr_dist
-        reward_progress = config.REWARD_PROGRESS_SCALE * progress
+        reward_progress = self._log_reward_component('progress', config.REWARD_PROGRESS_SCALE * progress)
         reward = reward_progress
-        if config.DEBUG_MODE and config.LOG_REWARD_COMPONENTS:
-            self.reward_components['progress'] = reward_progress
 
         # Velocity reward - награда за полёт в направлении цели
         goal_world = self.goal_pos - drone_pos
         goal_direction = goal_world / (np.linalg.norm(goal_world) + 1e-6)
         velocity_towards_goal = np.dot(drone_vel, goal_direction)
-        reward_velocity = config.REWARD_VELOCITY_SCALE * max(0, velocity_towards_goal)  # Увеличено с 1.0 до 2.0
+        reward_velocity = self._log_reward_component('velocity', config.REWARD_VELOCITY_SCALE * max(0, velocity_towards_goal))
         reward += reward_velocity
-        if config.DEBUG_MODE and config.LOG_REWARD_COMPONENTS:
-            self.reward_components['velocity'] = reward_velocity
 
-        # Yaw penalty - штраф за избыточное вращение
-        # Получаем текущее действие yaw_rate из prev_action (нормализованное [-1, 1])
-        yaw_action = abs(self.prev_action[3]) if len(self.prev_action) > 3 else 0
-        reward_yaw_penalty = -config.REWARD_YAW_PENALTY_SCALE * yaw_action
-        reward += reward_yaw_penalty
-        if config.DEBUG_MODE and config.LOG_REWARD_COMPONENTS:
-            self.reward_components['yaw_penalty'] = reward_yaw_penalty
+        # Yaw penalty - штраф за избыточное вращение (только когда уже смотрим на цель)
+        # Вычисляем направление "вперед" дрона в world frame
+        rot_matrix = np.array(p.getMatrixFromQuaternion(drone_quat)).reshape(3, 3)
+        forward_direction = rot_matrix[:, 0]  # Forward axis в body frame
+
+        # Проверяем, смотрим ли мы уже на цель
+        alignment_to_goal = np.dot(forward_direction, goal_direction)
+
+        # Штраф только если уже смотрим на цель (alignment > 0.8) но продолжаем вращаться
+        if alignment_to_goal > 0.8:
+            yaw_action = abs(self.prev_action[3]) if len(self.prev_action) > 3 else 0
+            reward_yaw_penalty = self._log_reward_component('yaw_penalty', -config.REWARD_YAW_PENALTY_SCALE * yaw_action)
+            reward += reward_yaw_penalty
+        else:
+            self._log_reward_component('yaw_penalty', 0.0)
 
         # Heading reward - награда за правильное направление к цели
         speed = np.linalg.norm(drone_vel)
         if speed > 0.1:  # Только если дрон движется
             vel_direction = drone_vel / speed
             heading_alignment = np.dot(vel_direction, goal_direction)  # cos угла между скоростью и направлением к цели
-            reward_heading = config.REWARD_HEADING_SCALE * max(0, heading_alignment)
+            reward_heading = self._log_reward_component('heading', config.REWARD_HEADING_SCALE * max(0, heading_alignment))
             reward += reward_heading
-            if config.DEBUG_MODE and config.LOG_REWARD_COMPONENTS:
-                self.reward_components['heading'] = reward_heading
-        elif config.DEBUG_MODE and config.LOG_REWARD_COMPONENTS:
-            self.reward_components['heading'] = 0.0
+        else:
+            self._log_reward_component('heading', 0.0)
 
         # Action smoothness penalty - штраф за резкие изменения действий
         if hasattr(self, 'prev_prev_action') and len(self.prev_prev_action) > 0:
             action_change = np.linalg.norm(self.prev_action - self.prev_prev_action)
-            reward_smoothness = -config.REWARD_ACTION_SMOOTHNESS_SCALE * action_change
+            reward_smoothness = self._log_reward_component('smoothness', -config.REWARD_ACTION_SMOOTHNESS_SCALE * action_change)
             reward += reward_smoothness
-            if config.DEBUG_MODE and config.LOG_REWARD_COMPONENTS:
-                self.reward_components['smoothness'] = reward_smoothness
-        elif config.DEBUG_MODE and config.LOG_REWARD_COMPONENTS:
-            self.reward_components['smoothness'] = 0.0
+        else:
+            self._log_reward_component('smoothness', 0.0)
 
-        # Proximity bonus - УСИЛЕННАЯ награда за близость к цели
-        reward_proximity = 15.0 * np.exp(-curr_dist)
+        # Proximity bonus - награда за близость к цели
+        reward_proximity = self._log_reward_component('proximity', config.REWARD_PROXIMITY_SCALE * np.exp(-curr_dist))
         reward += reward_proximity
-        if config.DEBUG_MODE and config.LOG_REWARD_COMPONENTS:
-            self.reward_components['proximity'] = reward_proximity
 
         # Update previous distance
         self.prev_dist_to_goal = curr_dist
@@ -268,13 +287,12 @@ class NavAviary(BaseRLAviary):
         grid_z = int(drone_pos[2] / config.EXPLORATION_GRID_SIZE)
         grid_key = (grid_x, grid_y, grid_z)
 
-        reward_exploration = 0.0
         if grid_key not in self.visited_cells:
             self.visited_cells.add(grid_key)
-            reward_exploration = config.REWARD_EXPLORATION_BONUS
+            reward_exploration = self._log_reward_component('exploration', config.REWARD_EXPLORATION_BONUS)
             reward += reward_exploration
-        if config.DEBUG_MODE and config.LOG_REWARD_COMPONENTS:
-            self.reward_components['exploration'] = reward_exploration
+        else:
+            self._log_reward_component('exploration', 0.0)
 
         # Proximity penalty based on raycasts - умеренный экспоненциальный штраф
         raycasts = self.raycast_sensor.cast_rays(drone_pos, drone_quat, self.CLIENT)
@@ -290,16 +308,15 @@ class NavAviary(BaseRLAviary):
                 self.episode_near_misses += 1
 
         # Умеренный экспоненциальный штраф
-        reward_obstacle = 0.0
         if min_dist < config.REWARD_PROXIMITY_THRESHOLD:
             penalty = config.REWARD_PROXIMITY_SCALE * np.exp(-min_dist)
-            reward_obstacle = -penalty
+            reward_obstacle = self._log_reward_component('obstacle', -penalty)
             reward += reward_obstacle
-        if config.DEBUG_MODE and config.LOG_REWARD_COMPONENTS:
-            self.reward_components['obstacle'] = reward_obstacle
+        else:
+            self._log_reward_component('obstacle', 0.0)
 
         # Step penalty
-        reward_step = -config.REWARD_STEP_PENALTY
+        reward_step = self._log_reward_component('step_penalty', -config.REWARD_STEP_PENALTY)
         reward += reward_step
         if config.DEBUG_MODE and config.LOG_REWARD_COMPONENTS:
             self.reward_components['step_penalty'] = reward_step
@@ -317,6 +334,25 @@ class NavAviary(BaseRLAviary):
         # Track min goal distance
         if config.DEBUG_MODE and config.LOG_EPISODE_METRICS:
             self.episode_min_goal_dist = min(self.episode_min_goal_dist, curr_dist)
+
+        # Track extended episode metrics
+        if config.DEBUG_MODE and config.LOG_EXTENDED_EPISODE_METRICS:
+            # Track clearance (distance to nearest obstacle)
+            self.episode_clearances.append(min_dist)
+
+            # Track goal seeking (is velocity pointing towards goal?)
+            speed = np.linalg.norm(drone_vel)
+            if speed > 0.1:
+                vel_direction = drone_vel / speed
+                alignment = np.dot(vel_direction, goal_direction)
+                if alignment > 0:  # Flying towards goal (angle < 90°)
+                    self.episode_goal_seeking_steps += 1
+
+            # Track yaw rate
+            yaw_rate = abs(self.prev_action[3]) if len(self.prev_action) > 3 else 0
+            self.episode_yaw_rates.append(yaw_rate)
+
+            self.episode_total_steps += 1
 
         return reward
 
@@ -430,6 +466,25 @@ class NavAviary(BaseRLAviary):
                     ])
                     info['action_smoothness'] = smoothness
 
+            if config.LOG_EXTENDED_EPISODE_METRICS:
+                # Average clearance
+                if len(self.episode_clearances) > 0:
+                    info['avg_clearance'] = np.mean(self.episode_clearances)
+
+                # Hovering time (% of time with low speed)
+                if len(self.episode_speeds) > 0:
+                    hovering_steps = np.sum(np.array(self.episode_speeds) < config.HOVERING_SPEED_THRESHOLD)
+                    info['hovering_time'] = hovering_steps / len(self.episode_speeds)
+
+                # Goal seeking ratio
+                if self.episode_total_steps > 0:
+                    info['goal_seeking_ratio'] = self.episode_goal_seeking_steps / self.episode_total_steps
+
+                # Spinning time (% of time with high yaw rate)
+                if len(self.episode_yaw_rates) > 0:
+                    spinning_steps = np.sum(np.array(self.episode_yaw_rates) > config.SPINNING_YAW_THRESHOLD)
+                    info['spinning_time'] = spinning_steps / len(self.episode_yaw_rates)
+
         return info
 
     def reset(self, seed=None, options=None):
@@ -474,6 +529,13 @@ class NavAviary(BaseRLAviary):
             self.episode_min_goal_dist = self.prev_dist_to_goal
             self.reward_components = {}
 
+            # Extended episode metrics
+            if config.LOG_EXTENDED_EPISODE_METRICS:
+                self.episode_clearances = []  # List of clearances to nearest obstacle
+                self.episode_goal_seeking_steps = 0  # Steps when flying towards goal
+                self.episode_total_steps = 0  # Total steps for ratio calculation
+                self.episode_yaw_rates = []  # List of yaw rates
+
         return obs, info
 
     def step(self, action):
@@ -498,15 +560,10 @@ class NavAviary(BaseRLAviary):
         dt = 1.0 / self.CTRL_FREQ
         self.scenario.update_dynamic_obstacles(dt)
 
-        # Convert normalized action to actual velocities
-        vx = action[0] * config.VX_MAX
-        vy = action[1] * config.VY_MAX
-        vz = action[2] * config.VZ_MAX
-        yaw_rate = action[3] * config.YAW_RATE_MAX
-
         # Execute action through parent class
+        # IMPORTANT: Pass normalized action [-1, 1], _preprocessAction() will handle scaling
         obs, reward, terminated, truncated, info = super().step(
-            np.array([[vx, vy, vz, yaw_rate]])
+            np.array([action])
         )
 
         # Track trajectory for debug

@@ -97,8 +97,8 @@ class RaycastSensor:
             distance = hit_fraction * self.ray_length
             ray_results.append(distance)
 
-        # Normalize distances to [0, 1] where 0 = far, 1 = close
-        # This makes it easier for the network to learn
+        # Normalize distances to [0, 1] where 1 = far (safe), 0 = close (danger)
+        # This is more intuitive: high values = safe, low values = danger
         normalized = np.array(ray_results) / self.ray_length
 
         return normalized
