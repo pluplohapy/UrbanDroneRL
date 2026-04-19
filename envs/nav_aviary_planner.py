@@ -227,9 +227,22 @@ class NavAviaryWithPlanner(NavAviary):
         drone_quat = self._getDroneStateVector(0)[3:7]
         drone_vel = self._getDroneStateVector(0)[10:13]
 
-        # Get current target
+        # Get current target (FIXED: same logic as _computeObs to avoid obs/reward mismatch)
         if self.use_planner and len(self.waypoints) > 0:
-            current_target = self.waypoints[self.current_waypoint_idx]
+            # Если достигли последнего waypoint, переключаемся на реальную цель
+            if self.current_waypoint_idx >= len(self.waypoints) - 1:
+                # Проверяем достигли ли последний waypoint
+                last_waypoint = self.waypoints[-1]
+                dist_to_last_wp = np.linalg.norm(last_waypoint - drone_pos)
+                if dist_to_last_wp < self.waypoint_threshold:
+                    # Последний waypoint достигнут - переключаемся на реальную цель
+                    current_target = self.goal_pos
+                else:
+                    # Еще летим к последнему waypoint
+                    current_target = self.waypoints[self.current_waypoint_idx]
+            else:
+                # Летим к промежуточному waypoint
+                current_target = self.waypoints[self.current_waypoint_idx]
         else:
             current_target = self.goal_pos
 

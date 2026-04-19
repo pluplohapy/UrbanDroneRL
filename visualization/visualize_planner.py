@@ -108,8 +108,15 @@ def visualize_episode(env, model, render=True, save_video=False):
         steps += 1
 
         # Track trajectory
-        drone_pos = env.envs[0]._getDroneStateVector(0)[:3]
+        drone_state = env.envs[0]._getDroneStateVector(0)
+        drone_pos = drone_state[:3]
+        drone_vel = drone_state[10:13]
         trajectory.append(drone_pos.copy())
+
+        # Calculate metrics
+        speed = np.linalg.norm(drone_vel)
+        dist_to_goal = np.linalg.norm(goal - drone_pos)
+        yaw_rate = abs(action[0][3]) * config.YAW_RATE_MAX if len(action[0]) > 3 else 0
 
         # Draw actual trajectory (thick red line)
         p.addUserDebugLine(
@@ -124,11 +131,14 @@ def visualize_episode(env, model, render=True, save_video=False):
         if render:
             time.sleep(1.0 / 30.0)  # 30 FPS
 
-        # Print waypoint progress
+        # Print detailed progress every 50 steps
         if 'current_waypoint_idx' in info[0]:
             current_wp_idx = info[0]['current_waypoint_idx']
             if steps % 50 == 0:
-                print(f"  Step {steps}: waypoint {current_wp_idx+1}/{len(waypoints)}, reward={reward[0]:.2f}")
+                print(f"  Step {steps}: wp {current_wp_idx+1}/{len(waypoints)} | "
+                      f"pos=[{drone_pos[0]:.2f}, {drone_pos[1]:.2f}, {drone_pos[2]:.2f}] | "
+                      f"dist={dist_to_goal:.2f}m | speed={speed:.2f}m/s | "
+                      f"yaw_rate={yaw_rate:.2f}rad/s | reward={reward[0]:.2f}")
 
     # Results
     is_success = info[0].get('is_success', False)
