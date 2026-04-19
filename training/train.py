@@ -277,10 +277,11 @@ def make_env_stage0(rank, seed=0, use_planner=True):
                 replan_freq=0,
                 waypoint_threshold=config.WAYPOINT_THRESHOLD,  # 0.3м
                 planner_params={
-                    'max_iter': 500,  # Меньше итераций для пустой арены
-                    'step_size': 1.0,
-                    'goal_bias': 0.2,  # Выше bias - быстрее к цели
-                    'rewire_radius': 3.0,
+                    'max_iter': 300,  # Уменьшено с 500 для ускорения
+                    'step_size': 1.5,  # Увеличено с 1.0 - больше шаги, меньше итераций
+                    'goal_bias': 0.3,  # Увеличено с 0.2 - быстрее к цели
+                    'rewire_radius': 2.5,  # Уменьшено с 3.0 - меньше соседей для rewiring
+                    'collision_check_resolution': 0.3,  # Увеличено с 0.1 - меньше проверок
                     'verbose': 0  # Quiet mode
                 }
             )
@@ -308,10 +309,11 @@ def make_env_stage1(rank, seed=0, use_planner=True):
                 replan_freq=0,
                 waypoint_threshold=config.WAYPOINT_THRESHOLD,  # 0.3м
                 planner_params={
-                    'max_iter': 1000,
-                    'step_size': 1.0,
-                    'goal_bias': 0.15,
-                    'rewire_radius': 3.0,
+                    'max_iter': 300,  # Уменьшено с 500 для ускорения
+                    'step_size': 1.5,  # Увеличено с 1.0 - больше шаги, меньше итераций
+                    'goal_bias': 0.2,  # Увеличено с 0.15 - быстрее к цели
+                    'rewire_radius': 2.5,  # Уменьшено с 3.0 - меньше соседей для rewiring
+                    'collision_check_resolution': 0.3,  # Увеличено с 0.1 - меньше проверок
                     'verbose': 0  # Quiet mode
                 }
             )
@@ -391,17 +393,19 @@ def main():
     print(f"  Model path: {model_path}")
 
     if use_planner:
-        print(f"\n[CONFIG] RRT* Planner Parameters:")
+        print(f"\n[CONFIG] RRT* Planner Parameters (OPTIMIZED):")
         if stage == 0:
-            print(f"  max_iter: 500 (меньше для пустой арены)")
-            print(f"  step_size: 1.0m")
-            print(f"  goal_bias: 0.2 (выше для прямого пути)")
-            print(f"  rewire_radius: 3.0m")
+            print(f"  max_iter: 300 (оптимизировано для скорости)")
+            print(f"  step_size: 1.5m (больше шаги)")
+            print(f"  goal_bias: 0.3 (выше для прямого пути)")
+            print(f"  rewire_radius: 2.5m (меньше rewiring)")
+            print(f"  collision_check_resolution: 0.3m (меньше проверок)")
         else:
-            print(f"  max_iter: 1000")
-            print(f"  step_size: 1.0m")
-            print(f"  goal_bias: 0.15")
-            print(f"  rewire_radius: 3.0m")
+            print(f"  max_iter: 300 (оптимизировано для скорости)")
+            print(f"  step_size: 1.5m (больше шаги)")
+            print(f"  goal_bias: 0.2 (быстрее к цели)")
+            print(f"  rewire_radius: 2.5m (меньше rewiring)")
+            print(f"  collision_check_resolution: 0.3m (меньше проверок)")
         print(f"  max_segment_length: 5.0m")
 
     # Check for checkpoints

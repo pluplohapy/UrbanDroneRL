@@ -170,8 +170,8 @@ class RRTStarPlanner:
             best_parent.children.append(new_node)
             self.nodes.append(new_node)
 
-            # Rebuild KD-tree (every 50 iterations for efficiency, was 10)
-            if len(self.nodes) % 50 == 0:
+            # Rebuild KD-tree (every 100 iterations for efficiency, was 50)
+            if len(self.nodes) % 100 == 0:
                 self._rebuild_kdtree()
 
             # 8. Rewire neighbors
@@ -328,9 +328,16 @@ class RRTStarPlanner:
         """
         # Discretize line segment
         distance = self._distance(pos1, pos2)
-        n_checks = max(2, int(distance / self.collision_check_resolution))
+        n_checks = max(2, int(np.ceil(distance / self.collision_check_resolution)))
 
-        for i in range(n_checks + 1):
+        # Early exit: check endpoints first (most likely to fail)
+        if len(self.obstacles) > 0:
+            for obstacle in self.obstacles:
+                if self._point_in_cylinder(pos1, obstacle) or self._point_in_cylinder(pos2, obstacle):
+                    return False
+
+        # Check intermediate points
+        for i in range(1, n_checks):
             t = i / n_checks
             point = pos1 + t * (pos2 - pos1)
 
