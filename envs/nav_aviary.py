@@ -28,6 +28,11 @@ class NavAviary(BaseRLAviary):
         self.start_pos = None
         self.goal_pos = None
         self.prev_dist_to_goal = None
+
+        # Get arena bounds from scenario config
+        self.arena_size_x = scenario.config.ARENA_SIZE_X
+        self.arena_size_y = scenario.config.ARENA_SIZE_Y
+        self.arena_height = scenario.config.ARENA_HEIGHT
         self.control_step_counter = 0  # Renamed to avoid conflict with BaseRLAviary
         self.prev_action = np.zeros(4)
         self.prev_prev_action = np.zeros(4)  # Для smoothness penalty
@@ -157,7 +162,7 @@ class NavAviary(BaseRLAviary):
         goal_body = rot_matrix.T @ goal_world
 
         # Normalize goal vector
-        max_dist = np.sqrt(config.ARENA_SIZE_X**2 + config.ARENA_SIZE_Y**2 + config.ARENA_HEIGHT**2)
+        max_dist = np.sqrt(self.arena_size_x**2 + self.arena_size_y**2 + self.arena_height**2)
         goal_body_norm = goal_body / max_dist
 
         # 2. Distance to goal (1)
@@ -169,7 +174,7 @@ class NavAviary(BaseRLAviary):
         vel_norm = np.clip(vel_body / np.array([config.VX_MAX, config.VY_MAX, config.VZ_MAX]), -1, 1)
 
         # 4. Normalized height (1)
-        height_norm = drone_pos[2] / config.ARENA_HEIGHT
+        height_norm = drone_pos[2] / self.arena_height
 
         # 5. Yaw angle (1) - НОВОЕ!
         # Extract yaw from quaternion
@@ -271,8 +276,8 @@ class NavAviary(BaseRLAviary):
         self.prev_dist_to_goal = curr_dist
 
         # Exploration bonus - награда за посещение новых клеток
-        grid_x = int((drone_pos[0] + config.ARENA_SIZE_X / 2) / config.EXPLORATION_GRID_SIZE)
-        grid_y = int((drone_pos[1] + config.ARENA_SIZE_Y / 2) / config.EXPLORATION_GRID_SIZE)
+        grid_x = int((drone_pos[0] + self.arena_size_x / 2) / config.EXPLORATION_GRID_SIZE)
+        grid_y = int((drone_pos[1] + self.arena_size_y / 2) / config.EXPLORATION_GRID_SIZE)
         grid_z = int(drone_pos[2] / config.EXPLORATION_GRID_SIZE)
         grid_key = (grid_x, grid_y, grid_z)
 
@@ -347,7 +352,7 @@ class NavAviary(BaseRLAviary):
 
     def _computeTerminated(self):
         """
-        Check if episode should terminate (success or crash).
+        Check if episode should terminate (success, crash, or out of bounds).
 
         Returns:
             bool indicating termination
@@ -364,25 +369,24 @@ class NavAviary(BaseRLAviary):
         if len(contact_points) > 0:
             return True
 
+        # Crash: out of bounds (treat as collision with arena boundary)
+        if (abs(drone_pos[0]) > self.arena_size_x / 2 or
+            abs(drone_pos[1]) > self.arena_size_y / 2 or
+            drone_pos[2] < 0.1 or
+            drone_pos[2] > self.arena_height):
+            return True
+
         return False
 
     def _computeTruncated(self):
         """
-        Check if episode should be truncated (timeout or out of bounds).
+        Check if episode should be truncated (timeout only).
 
         Returns:
             bool indicating truncation
         """
         # Timeout
         if self.control_step_counter >= config.MAX_STEPS:
-            return True
-
-        # Out of bounds
-        drone_pos = self._getDroneStateVector(0)[:3]
-        if (abs(drone_pos[0]) > config.ARENA_SIZE_X / 2 or
-            abs(drone_pos[1]) > config.ARENA_SIZE_Y / 2 or
-            drone_pos[2] < 0.1 or
-            drone_pos[2] > config.ARENA_HEIGHT):
             return True
 
         return False
@@ -401,7 +405,16 @@ class NavAviary(BaseRLAviary):
         # Check success and crash
         is_success = dist_to_goal < config.SUCCESS_DIST
         contact_points = p.getContactPoints(bodyA=self.DRONE_IDS[0], physicsClientId=self.CLIENT)
-        is_crash = len(contact_points) > 0
+
+        # Check if out of bounds (also counts as crash)
+        out_of_bounds = (
+            abs(drone_pos[0]) > self.arena_size_x / 2 or
+            abs(drone_pos[1]) > self.arena_size_y / 2 or
+            drone_pos[2] < 0.1 or
+            drone_pos[2] > self.arena_height
+        )
+
+        is_crash = len(contact_points) > 0 or out_of_bounds
 
         # Get min ray distance
         raycasts = self.raycast_sensor.cast_rays(drone_pos, drone_quat, self.CLIENT)
@@ -487,18 +500,67 @@ class NavAviary(BaseRLAviary):
         Returns:
             observation, info
         """
-        # Generate start/goal BEFORE creating obstacles
-        self.start_pos, self.goal_pos = self.scenario._generate_start_goal()
+        # Generate start/goal positions BEFORE super().reset()
+        # (without creating obstacles yet)
+        if hasattr(self.scenario, '_generate_start_goal_zones'):
+            # For pretrain scenario
+            self.start_pos, self.goal_pos = self.scenario._generate_start_goal_zones()
+        else:
+            # For stage0/stage1 scenarios
+            self.start_pos, self.goal_pos = self.scenario._generate_start_goal()
 
-        # Set initial position
+        # Set INIT_XYZS to correct start position
         self.INIT_XYZS = np.array([self.start_pos])
         self.INIT_RPYS = np.array([[0, 0, 0]])
 
-        # Call parent reset (this calls p.resetSimulation())
+        # Call parent reset (this calls p.resetSimulation() and spawns drone at INIT_XYZS)
         obs, info = super().reset(seed=seed, options=options)
 
-        # NOW create obstacles AFTER resetSimulation
-        self.scenario.reset(self.CLIENT)
+        # NOW create obstacles AFTER resetSimulation (using the same start/goal)
+        self.scenario.obstacles = []  # Clear old obstacles
+        if hasattr(self.scenario, '_generate_obstacles'):
+            # For pretrain scenario
+            obstacle_type = self.scenario.obstacle_type
+            if obstacle_type == 'random':
+                chosen_type = self.scenario.rng.choice(list(self.scenario.config.OBSTACLE_TYPES.keys()))
+            else:
+                chosen_type = obstacle_type
+            self.scenario._generate_obstacles(chosen_type, self.start_pos, self.goal_pos, self.CLIENT)
+        elif hasattr(self.scenario, 'n_obstacles'):
+            # For stage1 scenario - generate obstacles
+            from envs.obstacles import StaticObstacle
+            self.scenario.n_obstacles = self.scenario.rng.randint(
+                self.scenario.config.STAGE1_N_OBSTACLES[0],
+                self.scenario.config.STAGE1_N_OBSTACLES[1] + 1
+            )
+            for i in range(self.scenario.n_obstacles):
+                radius = self.scenario.rng.uniform(
+                    self.scenario.config.STAGE1_RADIUS[0],
+                    self.scenario.config.STAGE1_RADIUS[1]
+                )
+                for attempt in range(50):
+                    x = self.scenario.rng.uniform(-self.scenario.config.ARENA_SIZE_X/2 + 1,
+                                                   self.scenario.config.ARENA_SIZE_X/2 - 1)
+                    y = self.scenario.rng.uniform(-self.scenario.config.ARENA_SIZE_Y/2 + 1,
+                                                   self.scenario.config.ARENA_SIZE_Y/2 - 1)
+                    pos = np.array([x, y, 0.0])
+
+                    dist_to_start = np.linalg.norm(pos[:2] - self.start_pos[:2])
+                    dist_to_goal = np.linalg.norm(pos[:2] - self.goal_pos[:2])
+
+                    if (dist_to_start < self.scenario.config.MIN_CLEARANCE + radius or
+                        dist_to_goal < self.scenario.config.MIN_CLEARANCE + radius):
+                        continue
+
+                    obstacle = StaticObstacle(
+                        position=pos,
+                        radius=radius,
+                        height=self.scenario.config.ARENA_HEIGHT,
+                        physics_client=self.CLIENT
+                    )
+                    self.scenario.obstacles.append(obstacle)
+                    break
+        # Stage0 has no obstacles
 
         # Reset internal state
         self.control_step_counter = 0
@@ -524,6 +586,9 @@ class NavAviary(BaseRLAviary):
                 self.episode_goal_seeking_steps = 0  # Steps when flying towards goal
                 self.episode_total_steps = 0  # Total steps for ratio calculation
                 self.episode_yaw_rates = []  # List of yaw rates
+
+        # Recompute observation with correct start position
+        obs = self._computeObs()
 
         return obs, info
 
@@ -586,7 +651,7 @@ class NavAviary(BaseRLAviary):
                 reward_terminal = config.REWARD_CRASH
                 reward += reward_terminal
 
-        # Add timeout penalty if episode ends without success
+        # Timeout penalty (only for timeout, not crash)
         if truncated and not terminated:
             reward_terminal = -200.0
             reward += reward_terminal

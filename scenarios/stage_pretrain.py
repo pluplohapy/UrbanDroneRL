@@ -240,16 +240,24 @@ class StagePretrainScenario(BaseScenario):
             swing_period = self.rng.uniform(*params['swing_period'])
             vertical_swing = params.get('vertical_swing', False)
 
-            # Find valid position (distributed across all heights)
+            # Get vertical amplitude from config (default to 0.15 if not specified)
+            if 'vertical_amplitude' in params:
+                vertical_amplitude = self.rng.uniform(*params['vertical_amplitude'])
+            else:
+                vertical_amplitude = 0.15
+
+            # Find valid position (center of arena for X and Z, random Y along corridor)
             for _ in range(50):
-                x = self.rng.uniform(-self.config.ARENA_SIZE_X/2 + 1, self.config.ARENA_SIZE_X/2 - 1)
+                x = 0.0  # Always at center of corridor width
                 y = self.rng.uniform(-self.config.ARENA_SIZE_Y/2 + 1, self.config.ARENA_SIZE_Y/2 - 1)
-                z = self.rng.uniform(0.8, self.config.ARENA_HEIGHT - 0.5)  # От низа до верха
+                # Place at center height so it can move full range (center ± amplitude)
+                z = self.config.ARENA_HEIGHT / 2  # Center at 1.5m for 3m height
                 pos = np.array([x, y, z])
 
                 if self._is_valid_position(pos, length/2, start_pos, goal_pos):
                     obstacle = SwingingStickObstacle(pos, length, thickness,
-                                                    swing_angle, swing_period, client_id, vertical_swing)
+                                                    swing_angle, swing_period, client_id,
+                                                    vertical_swing, vertical_amplitude)
                     self.obstacles.append(obstacle)
                     break
 

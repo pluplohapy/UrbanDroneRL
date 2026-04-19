@@ -7,7 +7,7 @@ Used for baseline verification.
 import numpy as np
 from typing import Tuple
 from scenarios.base_scenario import BaseScenario
-import config
+from config import load_config
 
 
 class Stage0Scenario(BaseScenario):
@@ -16,6 +16,7 @@ class Stage0Scenario(BaseScenario):
     def __init__(self, seed: int = None):
         """Initialize empty scenario."""
         super().__init__(seed)
+        self.config = load_config('0')
 
     def generate(self, physics_client: int) -> Tuple[np.ndarray, np.ndarray]:
         """

@@ -294,7 +294,7 @@ class BoxObstacle:
 class SwingingStickObstacle:
     """Swinging stick obstacle (ветка)."""
 
-    def __init__(self, position, length, thickness, swing_angle, swing_period, physics_client, vertical_swing=False):
+    def __init__(self, position, length, thickness, swing_angle, swing_period, physics_client, vertical_swing=False, vertical_amplitude=0.15):
         self.initial_position = np.array(position)
         self.position = np.array(position)
         self.length = length
@@ -311,7 +311,7 @@ class SwingingStickObstacle:
         self.height = 0  # Horizontal stick, no vertical extent for clearance check
 
         # Vertical movement parameters (like branches in wind)
-        self.vertical_amplitude = 0.15  # 15cm up-down movement
+        self.vertical_amplitude = vertical_amplitude  # From config
         self.vertical_frequency = 1.0 / swing_period  # Sync with swing
 
         # Create collision shape (capsule)

@@ -7,7 +7,7 @@ import numpy as np
 import pybullet as p
 from scenarios.base_scenario import BaseScenario
 from envs.obstacles import StaticObstacle
-import config
+from config import load_config
 
 
 class Stage1Scenario(BaseScenario):
@@ -21,6 +21,7 @@ class Stage1Scenario(BaseScenario):
             seed: Random seed for reproducibility
         """
         super().__init__(seed)
+        self.config = load_config('1')
         self.n_obstacles = 0
         self.client_id = None
 
@@ -58,8 +59,8 @@ class Stage1Scenario(BaseScenario):
 
         # Generate random number of obstacles
         self.n_obstacles = self.rng.randint(
-            config.STAGE1_N_OBSTACLES[0],
-            config.STAGE1_N_OBSTACLES[1] + 1
+            self.config.STAGE1_N_OBSTACLES[0],
+            self.config.STAGE1_N_OBSTACLES[1] + 1
         )
 
         # Create obstacles
@@ -67,23 +68,23 @@ class Stage1Scenario(BaseScenario):
         for i in range(self.n_obstacles):
             # Random radius and position
             radius = self.rng.uniform(
-                config.STAGE1_RADIUS[0],
-                config.STAGE1_RADIUS[1]
+                self.config.STAGE1_RADIUS[0],
+                self.config.STAGE1_RADIUS[1]
             )
 
             # Try to find valid position (not blocking start/goal)
             max_attempts = 50
             for attempt in range(max_attempts):
-                x = self.rng.uniform(-config.ARENA_SIZE_X/2 + 1, config.ARENA_SIZE_X/2 - 1)
-                y = self.rng.uniform(-config.ARENA_SIZE_Y/2 + 1, config.ARENA_SIZE_Y/2 - 1)
+                x = self.rng.uniform(-self.config.ARENA_SIZE_X/2 + 1, self.config.ARENA_SIZE_X/2 - 1)
+                y = self.rng.uniform(-self.config.ARENA_SIZE_Y/2 + 1, self.config.ARENA_SIZE_Y/2 - 1)
                 pos = np.array([x, y, 0.0])  # z=0 is bottom of cylinder
 
                 # Check clearance from start and goal
                 dist_to_start = np.linalg.norm(pos[:2] - start_pos[:2])
                 dist_to_goal = np.linalg.norm(pos[:2] - goal_pos[:2])
 
-                if (dist_to_start < config.MIN_CLEARANCE + radius or
-                    dist_to_goal < config.MIN_CLEARANCE + radius):
+                if (dist_to_start < self.config.MIN_CLEARANCE + radius or
+                    dist_to_goal < self.config.MIN_CLEARANCE + radius):
                     continue  # Too close to start or goal
 
                 # Check if obstacle blocks direct path from start to goal
@@ -106,14 +107,14 @@ class Stage1Scenario(BaseScenario):
                         dist_to_line = np.linalg.norm(perpendicular)
 
                         # If too close to direct path, skip this position
-                        if dist_to_line < config.MIN_CLEARANCE + radius:
+                        if dist_to_line < self.config.MIN_CLEARANCE + radius:
                             continue  # Blocks direct path
 
                 # Valid position found
                 obstacle = StaticObstacle(
                     position=pos,
                     radius=radius,
-                    height=config.ARENA_HEIGHT,  # Full height cylinder
+                    height=self.config.ARENA_HEIGHT,  # Full height cylinder
                     physics_client=client_id
                 )
                 self.obstacles.append(obstacle)

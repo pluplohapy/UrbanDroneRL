@@ -132,7 +132,7 @@ def visualize_flight(model_path="models/ppo_drone_nav_test",
             action, _ = model.predict(obs, deterministic=deterministic)
             actions_log.append(action[0].copy())
 
-            # Get current state
+            # Get current state BEFORE step
             curr_pos = env.envs[0]._getDroneStateVector(0)[:3]
             curr_vel = env.envs[0]._getDroneStateVector(0)[10:13]
             trajectory.append(curr_pos.copy())
@@ -151,15 +151,6 @@ def visualize_flight(model_path="models/ppo_drone_nav_test",
                 heading_errors_log.append(np.degrees(heading_error))
             else:
                 heading_errors_log.append(90.0)
-
-            # Update camera to follow drone (third person view)
-            p.resetDebugVisualizerCamera(
-                cameraDistance=5.0,
-                cameraYaw=50,
-                cameraPitch=-35,
-                cameraTargetPosition=curr_pos,
-                physicsClientId=env.envs[0].CLIENT
-            )
 
             # Print detailed info every 30 steps
             if step % 30 == 0:
@@ -181,7 +172,18 @@ def visualize_flight(model_path="models/ppo_drone_nav_test",
             prev_pos = curr_pos
 
             # Step environment
-            obs, reward, done, info = env.step(action)
+            step_result = env.step(action)
+
+            # Check what step returns (old API: 4 values, new API: 5 values)
+            if len(step_result) == 5:
+                obs, reward, terminated, truncated, info = step_result
+                done = [terminated[0] or truncated[0]]
+                print(f"  [DEBUG STEP] terminated={terminated[0]}, truncated={truncated[0]}")
+            else:
+                obs, reward, done, info = step_result
+                terminated = done
+                truncated = [False]
+
             episode_reward += reward[0]
             step += 1
 
@@ -189,9 +191,58 @@ def visualize_flight(model_path="models/ppo_drone_nav_test",
             time.sleep(0.03)  # ~30 FPS
 
             if done[0]:
-                result = "SUCCESS ✓" if info[0].get("is_success", False) else \
-                         "CRASH ✗" if info[0].get("is_crash", False) else \
-                         "TIMEOUT"
+                # Get position AFTER step (where crash actually happened)
+                pos_after_step = env.envs[0]._getDroneStateVector(0)[:3]
+
+                # Use curr_pos (position BEFORE step) for trajectory
+                final_pos = curr_pos
+
+                # Check termination reason
+                is_success = info[0].get("is_success", False)
+                is_crash = info[0].get("is_crash", False)
+
+                # Check contact points directly
+                contact_points = p.getContactPoints(bodyA=env.envs[0].DRONE_IDS[0], physicsClientId=env.envs[0].CLIENT)
+                has_contact = len(contact_points) > 0
+
+                # Check if out of bounds BEFORE step
+                arena_x = env.envs[0].arena_size_x / 2
+                arena_y = env.envs[0].arena_size_y / 2
+                arena_z = env.envs[0].arena_height
+
+                out_of_bounds_before = (
+                    abs(final_pos[0]) > arena_x or
+                    abs(final_pos[1]) > arena_y or
+                    final_pos[2] < 0.1 or
+                    final_pos[2] > arena_z
+                )
+
+                # Check if out of bounds AFTER step (where it actually crashed)
+                out_of_bounds_after = (
+                    abs(pos_after_step[0]) > arena_x or
+                    abs(pos_after_step[1]) > arena_y or
+                    pos_after_step[2] < 0.1 or
+                    pos_after_step[2] > arena_z
+                )
+
+                # Debug output
+                print(f"\n  [DEBUG] Pos BEFORE step: [{final_pos[0]:.2f}, {final_pos[1]:.2f}, {final_pos[2]:.2f}]")
+                print(f"  [DEBUG] Pos AFTER step:  [{pos_after_step[0]:.2f}, {pos_after_step[1]:.2f}, {pos_after_step[2]:.2f}]")
+                print(f"  [DEBUG] Arena bounds: X=±{arena_x:.1f}, Y=±{arena_y:.1f}, Z=0.1-{arena_z:.1f}")
+                print(f"  [DEBUG] Out of bounds BEFORE: {out_of_bounds_before}")
+                print(f"  [DEBUG] Out of bounds AFTER: {out_of_bounds_after}")
+                print(f"  [DEBUG] is_crash={is_crash}, is_success={is_success}, has_contact={has_contact}, step={step}")
+
+                out_of_bounds = out_of_bounds_before or out_of_bounds_after
+
+                if is_success:
+                    result = "SUCCESS ✓"
+                elif is_crash or out_of_bounds:
+                    result = "CRASH ✗"
+                    if out_of_bounds:
+                        result += f" (OUT OF BOUNDS: pos=[{final_pos[0]:.2f}, {final_pos[1]:.2f}, {final_pos[2]:.2f}])"
+                else:
+                    result = "TIMEOUT"
 
                 # Calculate episode statistics
                 min_dist = min(distances_log)
