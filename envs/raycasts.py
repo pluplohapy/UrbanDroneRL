@@ -1,6 +1,6 @@
 """
 Raycast module for obstacle detection.
-Implements 16-ray configuration: 8 horizontal + 4 at +30° + 4 at -30°.
+Implements 20-ray configuration: 8 horizontal + 4 at +30° + 4 at -30° + 1 up + 1 down + 2 diagonal up.
 """
 
 import numpy as np
@@ -9,7 +9,7 @@ from typing import List, Tuple
 
 
 class RaycastSensor:
-    """16-ray sensor for obstacle detection."""
+    """20-ray sensor for obstacle detection."""
 
     def __init__(self, ray_length: float = 5.0):
         """
@@ -19,17 +19,17 @@ class RaycastSensor:
             ray_length: Maximum ray distance in meters
         """
         self.ray_length = ray_length
-        self.n_rays = 16
+        self.n_rays = 20
 
         # Generate ray directions in body frame
         self.ray_directions = self._generate_ray_directions()
 
     def _generate_ray_directions(self) -> np.ndarray:
         """
-        Generate 16 ray directions in body frame.
+        Generate 20 ray directions in body frame.
 
         Returns:
-            Array of shape (16, 3) with normalized direction vectors
+            Array of shape (20, 3) with normalized direction vectors
         """
         directions = []
 
@@ -57,6 +57,20 @@ class RaycastSensor:
             dx = np.cos(angle) * np.cos(elevation_down)
             dy = np.sin(angle) * np.cos(elevation_down)
             dz = np.sin(elevation_down)
+            directions.append([dx, dy, dz])
+
+        # 1 ray straight up (90°)
+        directions.append([0.0, 0.0, 1.0])
+
+        # 1 ray straight down (-90°)
+        directions.append([0.0, 0.0, -1.0])
+
+        # 2 additional rays at +60° elevation (forward and backward)
+        elevation_steep = np.radians(60)
+        for angle in [0, np.pi]:  # Forward and backward
+            dx = np.cos(angle) * np.cos(elevation_steep)
+            dy = np.sin(angle) * np.cos(elevation_steep)
+            dz = np.sin(elevation_steep)
             directions.append([dx, dy, dz])
 
         return np.array(directions)

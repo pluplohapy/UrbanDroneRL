@@ -8,13 +8,13 @@ CTRL_FREQ = 30  # Control frequency (Hz) - how often agent makes decisions
 MAX_STEPS = 1200  # Episode length in control steps (1200/30 = 40 seconds)
 
 # ===== DRONE CONTROL PARAMETERS =====
-VX_MAX = 1.5
-VY_MAX = 1.5
-VZ_MAX = 0.8
+VX_MAX = 3.0  # Was 1.5
+VY_MAX = 3.0  # Was 1.5
+VZ_MAX = 1.6  # Was 0.8
 YAW_RATE_MAX = 0.8
 
 # ===== RAYCASTS =====
-N_RAYS = 16
+N_RAYS = 20  # Was 16
 RAY_LENGTH = 5.0
 
 # ===== TRAINING PARAMETERS =====

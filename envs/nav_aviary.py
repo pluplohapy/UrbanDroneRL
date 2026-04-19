@@ -135,21 +135,21 @@ class NavAviary(BaseRLAviary):
 
     def _observationSpace(self):
         """
-        Define observation space: 29 features.
-        3 (goal) + 1 (dist) + 3 (vel) + 1 (height) + 1 (yaw) + 4 (prev_action) + 16 (raycasts) = 29
+        Define observation space: 33 features.
+        3 (goal) + 1 (dist) + 3 (vel) + 1 (height) + 1 (yaw) + 4 (prev_action) + 20 (raycasts) = 33
 
         Returns:
-            Box space for 29-dimensional observation
+            Box space for 33-dimensional observation
         """
-        return spaces.Box(low=-1.0, high=1.0, shape=(29,), dtype=np.float32)
+        return spaces.Box(low=-1.0, high=1.0, shape=(33,), dtype=np.float32)
 
     def _computeObs(self):
         """
-        Compute observation vector (29 features).
-        3 (goal) + 1 (dist) + 3 (vel) + 1 (height) + 1 (yaw) + 4 (prev_action) + 16 (raycasts) = 29
+        Compute observation vector (33 features).
+        3 (goal) + 1 (dist) + 3 (vel) + 1 (height) + 1 (yaw) + 4 (prev_action) + 20 (raycasts) = 33
 
         Returns:
-            np.ndarray of shape (29,)
+            np.ndarray of shape (33,)
         """
         # Get drone state
         drone_pos = self._getDroneStateVector(0)[:3]
@@ -186,7 +186,7 @@ class NavAviary(BaseRLAviary):
         # 6. Previous action (4)
         prev_action = self.prev_action
 
-        # 7. Raycasts (16)
+        # 7. Raycasts (20)
         raycasts = self.raycast_sensor.cast_rays(drone_pos, drone_quat, self.CLIENT)
 
         # Concatenate all features
@@ -195,9 +195,9 @@ class NavAviary(BaseRLAviary):
             [dist_to_goal_norm],   # 1
             vel_norm,              # 3
             [height_norm],         # 1
-            [yaw_norm],            # 1 - НОВОЕ!
+            [yaw_norm],            # 1
             prev_action,           # 4
-            raycasts               # 16
+            raycasts               # 20
         ])
 
         return obs.astype(np.float32)

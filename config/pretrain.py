@@ -29,7 +29,7 @@ USE_PLANNER = False
 OBSTACLE_TYPES = {
     'cylinders': {
         'name': 'Цилиндры (столбы)',
-        'count': (2, 4),  # x2 количество
+        'count': (4, 5),  # x2 количество
         'radius': (0.4, 0.8),  # x2 ширина
         'height': (2.0, 2.8),
         'dynamic': False
