@@ -12,15 +12,17 @@ from stable_baselines3.common.vec_env import VecNormalize, DummyVecEnv
 from envs.nav_aviary import NavAviary
 from scenarios.stage0_empty import Stage0Scenario
 from scenarios.stage1_static import Stage1Scenario
+from scenarios.stage_pretrain import StagePretrainScenario
 from envs.visualization_utils import draw_arena_boundaries, draw_goal_marker
-import config
+from config import load_config
 
 
 def visualize_flight(model_path="models/ppo_drone_nav_test",
                      vec_normalize_path="models/vec_normalize_test.pkl",
                      n_episodes=5,
                      deterministic=True,
-                     stage=0):
+                     stage=0,
+                     obstacle_type='random'):
     """
     Visualize trained model flying in PyBullet GUI.
 
@@ -29,7 +31,8 @@ def visualize_flight(model_path="models/ppo_drone_nav_test",
         vec_normalize_path: Path to VecNormalize stats
         n_episodes: Number of episodes to visualize
         deterministic: Use deterministic policy
-        stage: 0 for empty, 1 for static obstacles
+        stage: 0 for empty, 1 for static obstacles, 'pretrain' for pretrain
+        obstacle_type: Obstacle type for pretrain stage
     """
     print("=" * 60)
     print("DRONE NAVIGATION VISUALIZATION")
@@ -39,7 +42,10 @@ def visualize_flight(model_path="models/ppo_drone_nav_test",
     print("\n[SETUP] Creating visualization environment...")
 
     def make_env():
-        if stage == 1:
+        if stage == 'pretrain':
+            scenario = StagePretrainScenario(obstacle_type=obstacle_type, seed=42)
+            print(f"✓ Using Pretrain stage (obstacle_type={obstacle_type})")
+        elif stage == 1:
             scenario = Stage1Scenario(seed=42)
             print("✓ Using Stage 1 (static obstacles)")
         else:
@@ -89,8 +95,21 @@ def visualize_flight(model_path="models/ppo_drone_nav_test",
         print(f"\nEpisode {episode + 1}/{n_episodes}")
         print("-" * 60)
 
-        # Draw arena boundaries
-        draw_arena_boundaries(env.envs[0].CLIENT)
+        # Get config for current stage
+        if stage == 'pretrain':
+            stage_config = load_config('pretrain')
+        elif stage == 1:
+            stage_config = load_config('1')
+        else:
+            stage_config = load_config('0')
+
+        # Draw arena boundaries with correct size
+        draw_arena_boundaries(
+            env.envs[0].CLIENT,
+            stage_config.ARENA_SIZE_X,
+            stage_config.ARENA_SIZE_Y,
+            stage_config.ARENA_HEIGHT
+        )
 
         # Get goal position for visualization
         goal_pos = env.envs[0].goal_pos
@@ -228,15 +247,24 @@ if __name__ == "__main__":
                         help="Number of episodes to visualize")
     parser.add_argument("--stochastic", action="store_true",
                         help="Use stochastic policy instead of deterministic")
-    parser.add_argument("--stage", type=int, default=0,
-                        help="Stage: 0=empty, 1=static obstacles")
+    parser.add_argument("--stage", type=str, default="0",
+                        help="Stage: 0=empty, 1=static obstacles, pretrain=pretrain")
+    parser.add_argument("--obstacle-type", type=str, default="random",
+                        help="Obstacle type for pretrain stage")
 
     args = parser.parse_args()
+
+    # Convert stage to appropriate type
+    if args.stage == 'pretrain':
+        stage = 'pretrain'
+    else:
+        stage = int(args.stage)
 
     visualize_flight(
         model_path=args.model,
         vec_normalize_path=args.normalize,
         n_episodes=args.episodes,
         deterministic=not args.stochastic,
-        stage=args.stage
+        stage=stage,
+        obstacle_type=args.obstacle_type
     )

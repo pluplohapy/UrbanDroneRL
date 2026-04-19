@@ -31,16 +31,17 @@ from envs.nav_aviary import NavAviary
 from envs.nav_aviary_planner import NavAviaryWithPlanner
 from scenarios.stage0_empty import Stage0Scenario
 from scenarios.stage1_static import Stage1Scenario
-import config
+from config import load_config
 
 
 class ProgressCallback(BaseCallback):
     """Callback for displaying training progress."""
 
-    def __init__(self, stage, use_planner, verbose=0):
+    def __init__(self, stage, use_planner, config, verbose=0):
         super().__init__(verbose)
         self.stage = stage
         self.use_planner = use_planner
+        self.config = config
         self.episode_count = 0
         self.episode_rewards = []
         self.episode_successes = []
@@ -62,7 +63,7 @@ class ProgressCallback(BaseCallback):
             self.timeout_metrics = {'final_dist': [], 'min_dist': [], 'start_dist': []}
 
             # Extended episode metrics
-            if config.LOG_EXTENDED_EPISODE_METRICS:
+            if self.config.LOG_EXTENDED_EPISODE_METRICS:
                 self.extended_metrics = {
                     'avg_clearance': [],
                     'hovering_time': [],
@@ -71,7 +72,7 @@ class ProgressCallback(BaseCallback):
                 }
 
             # Path following metrics (for planner)
-            if use_planner and config.LOG_PATH_FOLLOWING_METRICS:
+            if use_planner and self.config.LOG_PATH_FOLLOWING_METRICS:
                 self.path_following_metrics = {
                     'avg_cross_track_error': [],
                     'max_cross_track_error': [],
@@ -106,15 +107,15 @@ class ProgressCallback(BaseCallback):
                                 self.n_waypoints.append(info["n_waypoints"])
 
                         # Collect debug metrics
-                        if config.DEBUG_MODE:
+                        if self.config.DEBUG_MODE:
                             # Reward components
-                            if config.LOG_REWARD_COMPONENTS and 'reward_components' in info:
+                            if self.config.LOG_REWARD_COMPONENTS and 'reward_components' in info:
                                 for k, v in info['reward_components'].items():
                                     if k in self.reward_components:
                                         self.reward_components[k].append(v)
 
                             # Navigation metrics
-                            if config.LOG_NAVIGATION_METRICS:
+                            if self.config.LOG_NAVIGATION_METRICS:
                                 if 'path_efficiency' in info:
                                     self.navigation_metrics['path_efficiency'].append(info['path_efficiency'])
                                 if 'avg_heading_error' in info:
@@ -123,7 +124,7 @@ class ProgressCallback(BaseCallback):
                                     self.navigation_metrics['avg_speed'].append(info['avg_speed'])
 
                             # Episode metrics
-                            if config.LOG_EPISODE_METRICS:
+                            if self.config.LOG_EPISODE_METRICS:
                                 if 'start_distance' in info:
                                     self.episode_metrics['start_distance'].append(info['start_distance'])
                                 if 'min_goal_distance' in info:
@@ -134,20 +135,20 @@ class ProgressCallback(BaseCallback):
                                     self.episode_metrics['n_near_misses'].append(info['n_near_misses'])
 
                             # Action stats
-                            if config.LOG_ACTION_STATS:
+                            if self.config.LOG_ACTION_STATS:
                                 if 'action_mean' in info:
                                     self.action_stats['action_mean'].append(info['action_mean'])
                                 if 'action_smoothness' in info:
                                     self.action_stats['action_smoothness'].append(info['action_smoothness'])
 
                             # Timeout analysis
-                            if config.LOG_TIMEOUT_ANALYSIS and is_timeout:
+                            if self.config.LOG_TIMEOUT_ANALYSIS and is_timeout:
                                 self.timeout_metrics['final_dist'].append(info.get('dist_to_goal', 0))
                                 self.timeout_metrics['min_dist'].append(info.get('min_goal_distance', 0))
                                 self.timeout_metrics['start_dist'].append(info.get('start_distance', 0))
 
                             # Extended episode metrics
-                            if config.LOG_EXTENDED_EPISODE_METRICS:
+                            if self.config.LOG_EXTENDED_EPISODE_METRICS:
                                 if 'avg_clearance' in info:
                                     self.extended_metrics['avg_clearance'].append(info['avg_clearance'])
                                 if 'hovering_time' in info:
@@ -158,7 +159,7 @@ class ProgressCallback(BaseCallback):
                                     self.extended_metrics['spinning_time'].append(info['spinning_time'])
 
                             # Path following metrics
-                            if self.use_planner and config.LOG_PATH_FOLLOWING_METRICS:
+                            if self.use_planner and self.config.LOG_PATH_FOLLOWING_METRICS:
                                 if 'avg_cross_track_error' in info:
                                     self.path_following_metrics['avg_cross_track_error'].append(info['avg_cross_track_error'])
                                 if 'max_cross_track_error' in info:
@@ -166,7 +167,7 @@ class ProgressCallback(BaseCallback):
                                 if 'path_following_score' in info:
                                     self.path_following_metrics['path_following_score'].append(info['path_following_score'])
 
-                    if self.episode_count % config.LOG_INTERVAL_EPISODES == 0:
+                    if self.episode_count % self.config.LOG_INTERVAL_EPISODES == 0:
                         self._print_progress()
 
         return True
@@ -202,9 +203,9 @@ class ProgressCallback(BaseCallback):
             else:
                 print()
 
-        if config.DEBUG_MODE:
+        if self.config.DEBUG_MODE:
             # Reward components
-            if config.LOG_REWARD_COMPONENTS and len(self.reward_components['progress']) > 0:
+            if self.config.LOG_REWARD_COMPONENTS and len(self.reward_components['progress']) > 0:
                 recent_n = min(50, len(self.reward_components['progress']))
                 prog = np.mean(self.reward_components['progress'][-recent_n:])
                 vel = np.mean(self.reward_components['velocity'][-recent_n:])
@@ -215,7 +216,7 @@ class ProgressCallback(BaseCallback):
                 print(f"  Reward   : total={avg_reward:7.1f} | prog={prog:5.1f} | vel={vel:4.1f} | prox={prox:4.1f} | obst={obst:5.1f} | term={term:5.1f}")
 
             # Navigation metrics
-            if config.LOG_NAVIGATION_METRICS and len(self.navigation_metrics['path_efficiency']) > 0:
+            if self.config.LOG_NAVIGATION_METRICS and len(self.navigation_metrics['path_efficiency']) > 0:
                 recent_n = min(50, len(self.navigation_metrics['path_efficiency']))
                 eff = np.mean(self.navigation_metrics['path_efficiency'][-recent_n:])
                 heading = np.mean(self.navigation_metrics['avg_heading_error'][-recent_n:]) if len(self.navigation_metrics['avg_heading_error']) > 0 else 0
@@ -223,18 +224,18 @@ class ProgressCallback(BaseCallback):
                 print(f"  Navigate : efficiency={eff:.2f} | heading_err={heading:.1f}° | speed={speed:.2f}m/s")
 
             # Timeout analysis
-            if config.LOG_TIMEOUT_ANALYSIS and len(self.timeout_metrics['final_dist']) > 0:
+            if self.config.LOG_TIMEOUT_ANALYSIS and len(self.timeout_metrics['final_dist']) > 0:
                 final = np.mean(self.timeout_metrics['final_dist'])
                 min_d = np.mean(self.timeout_metrics['min_dist'])
 
                 # Calculate timeout_near_goal and timeout_stuck
-                near_goal_count = sum(1 for d in self.timeout_metrics['min_dist'] if d < config.TIMEOUT_NEAR_GOAL_THRESHOLD)
+                near_goal_count = sum(1 for d in self.timeout_metrics['min_dist'] if d < self.config.TIMEOUT_NEAR_GOAL_THRESHOLD)
                 near_goal_pct = near_goal_count / len(self.timeout_metrics['min_dist']) if len(self.timeout_metrics['min_dist']) > 0 else 0
 
                 print(f"  Timeouts : final_dist={final:.1f}m | min_dist={min_d:.1f}m | near_goal={near_goal_pct:.0%}")
 
             # Extended episode metrics
-            if config.LOG_EXTENDED_EPISODE_METRICS and len(self.extended_metrics['avg_clearance']) > 0:
+            if self.config.LOG_EXTENDED_EPISODE_METRICS and len(self.extended_metrics['avg_clearance']) > 0:
                 recent_n = min(50, len(self.extended_metrics['avg_clearance']))
                 clearance = np.mean(self.extended_metrics['avg_clearance'][-recent_n:])
                 hovering = np.mean(self.extended_metrics['hovering_time'][-recent_n:]) if len(self.extended_metrics['hovering_time']) > 0 else 0
@@ -243,7 +244,7 @@ class ProgressCallback(BaseCallback):
                 print(f"  Behavior : clearance={clearance:.2f}m | hovering={hovering:.0%} | goal_seek={goal_seek:.0%} | spinning={spinning:.0%}")
 
             # Path following metrics
-            if self.use_planner and config.LOG_PATH_FOLLOWING_METRICS and len(self.path_following_metrics['avg_cross_track_error']) > 0:
+            if self.use_planner and self.config.LOG_PATH_FOLLOWING_METRICS and len(self.path_following_metrics['avg_cross_track_error']) > 0:
                 recent_n = min(50, len(self.path_following_metrics['avg_cross_track_error']))
                 avg_cte = np.mean(self.path_following_metrics['avg_cross_track_error'][-recent_n:])
                 max_cte = np.mean(self.path_following_metrics['max_cross_track_error'][-recent_n:])
@@ -251,7 +252,7 @@ class ProgressCallback(BaseCallback):
                 print(f"  PathFollow: avg_CTE={avg_cte:.2f}m | max_CTE={max_cte:.2f}m | score={pf_score:.0%}")
 
             # Action stats
-            if config.LOG_ACTION_STATS and len(self.action_stats['action_smoothness']) > 0:
+            if self.config.LOG_ACTION_STATS and len(self.action_stats['action_smoothness']) > 0:
                 recent_n = min(50, len(self.action_stats['action_smoothness']))
                 smooth = np.mean(self.action_stats['action_smoothness'][-recent_n:])
                 if len(self.navigation_metrics['avg_speed']) > 0:
@@ -264,7 +265,7 @@ class ProgressCallback(BaseCallback):
         print()  # Empty line for readability
 
 
-def make_env_stage0(rank, seed=0, use_planner=True):
+def make_env_stage0(rank, seed=0, use_planner=True, config=None):
     """Create Stage 0 environment (empty arena)."""
     def _init():
         scenario = Stage0Scenario(seed=seed + rank)
@@ -275,14 +276,14 @@ def make_env_stage0(rank, seed=0, use_planner=True):
                 gui=False,
                 use_planner=True,
                 replan_freq=0,
-                waypoint_threshold=config.WAYPOINT_THRESHOLD,  # 0.3м
+                waypoint_threshold=config.WAYPOINT_THRESHOLD,
                 planner_params={
-                    'max_iter': 300,  # Уменьшено с 500 для ускорения
-                    'step_size': 1.5,  # Увеличено с 1.0 - больше шаги, меньше итераций
-                    'goal_bias': 0.3,  # Увеличено с 0.2 - быстрее к цели
-                    'rewire_radius': 2.5,  # Уменьшено с 3.0 - меньше соседей для rewiring
-                    'collision_check_resolution': 0.3,  # Увеличено с 0.1 - меньше проверок
-                    'verbose': 0  # Quiet mode
+                    'max_iter': config.RRT_MAX_ITER,
+                    'step_size': config.RRT_STEP_SIZE,
+                    'goal_bias': config.RRT_GOAL_BIAS,
+                    'rewire_radius': config.RRT_REWIRE_RADIUS,
+                    'collision_check_resolution': config.RRT_COLLISION_RESOLUTION,
+                    'verbose': 0
                 }
             )
         else:
@@ -296,7 +297,7 @@ def make_env_stage0(rank, seed=0, use_planner=True):
     return _init
 
 
-def make_env_stage1(rank, seed=0, use_planner=True):
+def make_env_stage1(rank, seed=0, use_planner=True, config=None):
     """Create Stage 1 environment (static obstacles)."""
     def _init():
         scenario = Stage1Scenario(seed=seed + rank)
@@ -307,14 +308,14 @@ def make_env_stage1(rank, seed=0, use_planner=True):
                 gui=False,
                 use_planner=True,
                 replan_freq=0,
-                waypoint_threshold=config.WAYPOINT_THRESHOLD,  # 0.3м
+                waypoint_threshold=config.WAYPOINT_THRESHOLD,
                 planner_params={
-                    'max_iter': 300,  # Уменьшено с 500 для ускорения
-                    'step_size': 1.5,  # Увеличено с 1.0 - больше шаги, меньше итераций
-                    'goal_bias': 0.2,  # Увеличено с 0.15 - быстрее к цели
-                    'rewire_radius': 2.5,  # Уменьшено с 3.0 - меньше соседей для rewiring
-                    'collision_check_resolution': 0.3,  # Увеличено с 0.1 - меньше проверок
-                    'verbose': 0  # Quiet mode
+                    'max_iter': config.RRT_MAX_ITER,
+                    'step_size': config.RRT_STEP_SIZE,
+                    'goal_bias': config.RRT_GOAL_BIAS,
+                    'rewire_radius': config.RRT_REWIRE_RADIUS,
+                    'collision_check_resolution': config.RRT_COLLISION_RESOLUTION,
+                    'verbose': 0
                 }
             )
         else:
@@ -328,22 +329,49 @@ def make_env_stage1(rank, seed=0, use_planner=True):
     return _init
 
 
+def make_env_pretrain(rank, seed=0, obstacle_type='random', config=None):
+    """Create Pretrain environment (diverse obstacles, no planner)."""
+    def _init():
+        from scenarios.stage_pretrain import StagePretrainScenario
+
+        scenario = StagePretrainScenario(
+            obstacle_type=obstacle_type,
+            seed=seed + rank
+        )
+
+        # Pretrain NEVER uses planner
+        env = NavAviary(
+            scenario=scenario,
+            gui=False
+        )
+
+        env = Monitor(env)
+        return env
+    return _init
+
+
 def main():
     parser = argparse.ArgumentParser(description='Train drone navigation')
-    parser.add_argument('--stage', type=int, required=True, choices=[0, 1],
-                        help='Training stage: 0 (empty) or 1 (obstacles)')
+    parser.add_argument('--stage', type=str, required=True, choices=['0', '1', 'pretrain'],
+                        help='Training stage: 0 (empty), 1 (obstacles), pretrain (diverse)')
+    parser.add_argument('--obstacle-type', type=str, default='random',
+                        choices=['random', 'cylinders', 'spheres', 'walls', 'beams', 'boxes', 'swinging_sticks'],
+                        help='Obstacle type for pretrain stage (default: random)')
     parser.add_argument('--no-planner', action='store_true',
-                        help='Disable RRT* planner (enabled by default for all stages)')
+                        help='Disable RRT* planner (enabled by default for stage 0/1, always disabled for pretrain)')
     parser.add_argument('--timesteps', type=int, default=None,
-                        help='Total training timesteps (default: 500k for Stage 0, 1.5M for Stage 1)')
-    parser.add_argument('--n-envs', type=int, default=config.N_ENVS,
-                        help=f'Number of parallel environments (default: {config.N_ENVS})')
+                        help='Total training timesteps (default: 500k for Stage 0, 1.5M for Stage 1, 500k for pretrain)')
+    parser.add_argument('--n-envs', type=int, default=None,
+                        help='Number of parallel environments (default: from config)')
     parser.add_argument('--continue', dest='continue_training', action='store_true',
                         help='Continue training from checkpoint')
     parser.add_argument('--debug', action='store_true',
                         help='Enable debug mode (detailed logging and metrics)')
 
     args = parser.parse_args()
+
+    # Load config for the specified stage
+    config = load_config(args.stage)
 
     # Enable debug mode if requested
     if args.debug:
@@ -352,16 +380,29 @@ def main():
 
     # Determine configuration
     stage = args.stage
-    use_planner = not args.no_planner  # Планировщик по умолчанию для всех stages
+
+    # Planner logic: pretrain never uses planner, others use by default unless --no-planner
+    if stage == 'pretrain':
+        use_planner = False
+    else:
+        use_planner = not args.no_planner
+
+    # Set default n_envs
+    n_envs = args.n_envs if args.n_envs is not None else config.N_ENVS
 
     # Set default timesteps
     if args.timesteps is None:
-        timesteps = 500_000 if stage == 0 else 1_500_000
+        if stage == '0':
+            timesteps = 500_000
+        elif stage == '1':
+            timesteps = 1_500_000
+        else:  # pretrain
+            timesteps = 500_000
     else:
         timesteps = args.timesteps
 
     # Model paths
-    if stage == 0:
+    if stage == '0':
         if use_planner:
             model_path = "models/ppo_drone_nav_stage0_planner"
             normalize_path = "models/vec_normalize_stage0_planner.pkl"
@@ -370,7 +411,7 @@ def main():
             model_path = "models/ppo_drone_nav_stage0"
             normalize_path = "models/vec_normalize_stage0.pkl"
             log_name = "PPO_stage0"
-    else:
+    elif stage == '1':
         if use_planner:
             model_path = "models/ppo_drone_nav_stage1_planner"
             normalize_path = "models/vec_normalize_stage1_planner.pkl"
@@ -379,34 +420,48 @@ def main():
             model_path = "models/ppo_drone_nav_stage1"
             normalize_path = "models/vec_normalize_stage1.pkl"
             log_name = "PPO_stage1"
+    else:  # pretrain
+        obstacle_type = args.obstacle_type
+        model_path = f"models/ppo_pretrain_{obstacle_type}"
+        normalize_path = f"models/vec_normalize_pretrain_{obstacle_type}.pkl"
+        log_name = f"PPO_pretrain_{obstacle_type}"
 
     # Print configuration
     print("=" * 60)
-    print(f"DRONE NAVIGATION TRAINING - STAGE {stage}")
-    print(f"Mode: {'WITH RRT* PLANNER' if use_planner else 'WITHOUT PLANNER'}")
+    print(f"DRONE NAVIGATION TRAINING - STAGE {stage.upper()}")
+    if stage == 'pretrain':
+        print(f"Mode: PRETRAIN (NO PLANNER) - Obstacle type: {args.obstacle_type}")
+    else:
+        print(f"Mode: {'WITH RRT* PLANNER' if use_planner else 'WITHOUT PLANNER'}")
     print("=" * 60)
     print(f"\n[CONFIG]")
     print(f"  Stage: {stage}")
+    if stage == 'pretrain':
+        print(f"  Obstacle type: {args.obstacle_type}")
     print(f"  Use planner: {use_planner}")
     print(f"  Total timesteps: {timesteps:,}")
-    print(f"  Parallel envs: {args.n_envs}")
+    print(f"  Parallel envs: {n_envs}")
+    print(f"  Arena: {config.ARENA_SIZE_X}x{config.ARENA_SIZE_Y}x{config.ARENA_HEIGHT}m")
     print(f"  Model path: {model_path}")
 
     if use_planner:
         print(f"\n[CONFIG] RRT* Planner Parameters (OPTIMIZED):")
-        if stage == 0:
-            print(f"  max_iter: 300 (оптимизировано для скорости)")
-            print(f"  step_size: 1.5m (больше шаги)")
-            print(f"  goal_bias: 0.3 (выше для прямого пути)")
-            print(f"  rewire_radius: 2.5m (меньше rewiring)")
-            print(f"  collision_check_resolution: 0.3m (меньше проверок)")
+        print(f"  max_iter: {config.RRT_MAX_ITER}")
+        print(f"  step_size: {config.RRT_STEP_SIZE}m")
+        print(f"  goal_bias: {config.RRT_GOAL_BIAS}")
+        print(f"  rewire_radius: {config.RRT_REWIRE_RADIUS}m")
+        print(f"  collision_check_resolution: {config.RRT_COLLISION_RESOLUTION}m")
+        print(f"  max_segment_length: {config.RRT_MAX_SEGMENT_LENGTH}m")
+
+    if stage == 'pretrain':
+        print(f"\n[CONFIG] Pretrain Obstacle Types:")
+        for obs_type, params in config.OBSTACLE_TYPES.items():
+            dynamic_str = " (DYNAMIC)" if params.get('dynamic', False) else ""
+            print(f"  - {params['name']}{dynamic_str}")
+        if args.obstacle_type == 'random':
+            print(f"  Training on: ALL TYPES (random)")
         else:
-            print(f"  max_iter: 300 (оптимизировано для скорости)")
-            print(f"  step_size: 1.5m (больше шаги)")
-            print(f"  goal_bias: 0.2 (быстрее к цели)")
-            print(f"  rewire_radius: 2.5m (меньше rewiring)")
-            print(f"  collision_check_resolution: 0.3m (меньше проверок)")
-        print(f"  max_segment_length: 5.0m")
+            print(f"  Training on: {args.obstacle_type.upper()} only")
 
     # Check for checkpoints
     checkpoint_exists = os.path.exists(f"{model_path}.zip") and os.path.exists(normalize_path)
@@ -424,10 +479,12 @@ def main():
 
     # Create environments
     print(f"\n[SETUP] Creating environments...")
-    if stage == 0:
-        env_fns = [make_env_stage0(i, config.SEED, use_planner) for i in range(args.n_envs)]
-    else:
-        env_fns = [make_env_stage1(i, config.SEED, use_planner) for i in range(args.n_envs)]
+    if stage == '0':
+        env_fns = [make_env_stage0(i, config.SEED, use_planner, config) for i in range(n_envs)]
+    elif stage == '1':
+        env_fns = [make_env_stage1(i, config.SEED, use_planner, config) for i in range(n_envs)]
+    else:  # pretrain
+        env_fns = [make_env_pretrain(i, config.SEED, args.obstacle_type, config) for i in range(n_envs)]
 
     vec_env = SubprocVecEnv(env_fns)
 
@@ -476,7 +533,7 @@ def main():
         print("✓ Model created")
 
     # Create callback
-    progress_callback = ProgressCallback(stage=stage, use_planner=use_planner)
+    progress_callback = ProgressCallback(stage=stage, use_planner=use_planner, config=config)
 
     print(f"\n[TRAINING] Starting training...")
     print("-" * 60)
@@ -511,7 +568,7 @@ def main():
 
     # Next steps
     print("\n[NEXT STEPS]")
-    if stage == 0:
+    if stage == '0':
         print("  1. Visualize Stage 0:")
         if use_planner:
             print(f"     python visualize_planner.py --model {model_path}")
@@ -519,7 +576,7 @@ def main():
             print(f"     python visualize.py --model {model_path}")
         print("\n  2. Train Stage 1 with planner:")
         print("     python training/train.py --stage 1")
-    else:
+    elif stage == '1':
         print("  1. Visualize Stage 1:")
         if use_planner:
             print(f"     python visualize_planner.py --model {model_path}")
@@ -527,6 +584,13 @@ def main():
             print(f"     python visualize.py --model {model_path}")
         print("\n  2. Compare with/without planner:")
         print("     python compare_planner.py")
+    else:  # pretrain
+        print("  1. Visualize Pretrain:")
+        print(f"     python visualization/visualize.py --model {model_path} --stage pretrain")
+        print("\n  2. Preview scenario generation:")
+        print(f"     python visualization/preview_scenarios.py --stage pretrain --obstacle-type {args.obstacle_type}")
+        print("\n  3. Train on different obstacle type:")
+        print("     python training/train.py --stage pretrain --obstacle-type spheres")
 
 
 if __name__ == "__main__":

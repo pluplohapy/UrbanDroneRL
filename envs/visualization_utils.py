@@ -3,19 +3,21 @@ Utility functions for drawing arena boundaries and markers in PyBullet.
 """
 
 import pybullet as p
-import config
 
 
-def draw_arena_boundaries(client_id):
+def draw_arena_boundaries(client_id, arena_size_x, arena_size_y, arena_height):
     """
     Draw arena boundaries as transparent walls.
 
     Args:
         client_id: PyBullet physics client ID
+        arena_size_x: Arena width
+        arena_size_y: Arena length
+        arena_height: Arena height
     """
-    half_x = config.ARENA_SIZE_X / 2
-    half_y = config.ARENA_SIZE_Y / 2
-    height = config.ARENA_HEIGHT
+    half_x = arena_size_x / 2
+    half_y = arena_size_y / 2
+    height = arena_height
 
     # Draw vertical edges (corners)
     corners = [
