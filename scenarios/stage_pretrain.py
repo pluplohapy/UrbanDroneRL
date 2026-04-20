@@ -22,8 +22,8 @@ class StagePretrainScenario(BaseScenario):
 
         Args:
             obstacle_type: Type of obstacles to generate
-                          'random' - random type each reset
-                          'cylinders', 'spheres', 'walls', 'beams', 'boxes', 'swinging_sticks' - specific type
+                          'random' - random type each reset (includes empty)
+                          'empty', 'cylinders', 'spheres', 'walls', 'beams', 'boxes', 'swinging_sticks' - specific type
             seed: Random seed for reproducibility
         """
         super().__init__(seed)
@@ -114,7 +114,10 @@ class StagePretrainScenario(BaseScenario):
         params = self.config.OBSTACLE_TYPES[obstacle_type]
         n_obstacles = self.rng.randint(params['count'][0], params['count'][1] + 1)
 
-        if obstacle_type == 'cylinders':
+        if obstacle_type == 'empty':
+            # No obstacles for empty map
+            return
+        elif obstacle_type == 'cylinders':
             self._generate_cylinders(n_obstacles, params, start_pos, goal_pos, client_id)
         elif obstacle_type == 'spheres':
             self._generate_spheres(n_obstacles, params, start_pos, goal_pos, client_id)

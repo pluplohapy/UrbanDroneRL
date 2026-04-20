@@ -27,6 +27,12 @@ USE_PLANNER = False
 
 # ===== OBSTACLE TYPES CONFIGURATION =====
 OBSTACLE_TYPES = {
+    'empty': {
+        'name': 'Пустая карта',
+        'count': (0, 0),
+        'dynamic': False
+    },
+
     'cylinders': {
         'name': 'Цилиндры (столбы)',
         'count': (4, 5),  # x2 количество

@@ -355,8 +355,8 @@ def main():
     parser.add_argument('--stage', type=str, required=True, choices=['0', '1', 'pretrain'],
                         help='Training stage: 0 (empty), 1 (obstacles), pretrain (diverse)')
     parser.add_argument('--obstacle-type', type=str, default='random',
-                        choices=['random', 'cylinders', 'spheres', 'walls', 'beams', 'boxes', 'swinging_sticks'],
-                        help='Obstacle type for pretrain stage (default: random)')
+                        choices=['random', 'empty', 'cylinders', 'spheres', 'walls', 'beams', 'boxes', 'swinging_sticks'],
+                        help='Obstacle type for pretrain stage (default: random, includes empty)')
     parser.add_argument('--no-planner', action='store_true',
                         help='Disable RRT* planner (enabled by default for stage 0/1, always disabled for pretrain)')
     parser.add_argument('--timesteps', type=int, default=None,
