@@ -7,6 +7,8 @@ Usage:
     python training/train.py --stage 1                    # Train Stage 1 with RRT*
     python training/train.py --stage 1 --no-planner       # Train Stage 1 without planner
     python training/train.py --stage 0 --timesteps 1000000  # Custom timesteps
+    python training/train.py --stage 0 --watch            # Continuous watch: fixed map + trajectory
+    python training/train.py --stage pretrain --watch --swarm-drones 8  # 8 drones in one map
 """
 
 import os
@@ -16,7 +18,7 @@ import numpy as np
 import torch
 import warnings
 from stable_baselines3 import PPO
-from stable_baselines3.common.vec_env import SubprocVecEnv, VecNormalize
+from stable_baselines3.common.vec_env import SubprocVecEnv, VecNormalize, DummyVecEnv
 from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.monitor import Monitor
 
@@ -48,6 +50,10 @@ class ProgressCallback(BaseCallback):
         self.episode_crashes = []
         self.episode_timeouts = []
         self.episode_lengths = []
+        self.swarm_mode_detected = False
+        self.swarm_respawns = []
+        self.swarm_successes = []
+        self.swarm_crashes = []
 
         # Planner metrics (only for Stage 1 with planner)
         if use_planner:
@@ -91,6 +97,12 @@ class ProgressCallback(BaseCallback):
 
                     # Track success/crash/timeout
                     if "is_success" in info:
+                        if info.get("swarm_mode", False):
+                            self.swarm_mode_detected = True
+                            self.swarm_respawns.append(info.get("swarm_respawns", 0))
+                            self.swarm_successes.append(info.get("swarm_successes", 0))
+                            self.swarm_crashes.append(info.get("swarm_crashes", 0))
+
                         is_success = info["is_success"]
                         is_crash = info.get("is_crash", False)
                         is_timeout = not is_success and not is_crash
@@ -190,6 +202,13 @@ class ProgressCallback(BaseCallback):
         print(f"Episode {self.episode_count:4d} | Steps: {self.num_timesteps:7d}")
         print(f"  Outcomes : S={success_rate:4.0%} | C={crash_rate:4.0%} | T={timeout_rate:4.0%}")
 
+        if self.swarm_mode_detected and len(self.swarm_respawns) > 0:
+            recent_n = min(10, len(self.swarm_respawns))
+            avg_respawns = np.mean(self.swarm_respawns[-recent_n:])
+            avg_swarm_success = np.mean(self.swarm_successes[-recent_n:]) if len(self.swarm_successes) > 0 else 0
+            avg_swarm_crash = np.mean(self.swarm_crashes[-recent_n:]) if len(self.swarm_crashes) > 0 else 0
+            print(f"  Swarm    : respawns={avg_respawns:.1f} | successes={avg_swarm_success:.1f} | crashes={avg_swarm_crash:.1f}")
+
         # Planner metrics
         if self.use_planner and len(self.planning_failures) > 0:
             recent_failures = self.planning_failures[-min(50, len(self.planning_failures)):]
@@ -265,7 +284,8 @@ class ProgressCallback(BaseCallback):
         print()  # Empty line for readability
 
 
-def make_env_stage0(rank, seed=0, use_planner=True, config=None):
+def make_env_stage0(rank, seed=0, use_planner=True, config=None, gui=False, watch_fps=None,
+                    fixed_map=False, show_paths=False, swarm_drones=1):
     """Create Stage 0 environment (empty arena)."""
     def _init():
         scenario = Stage0Scenario(seed=seed + rank)
@@ -273,7 +293,10 @@ def make_env_stage0(rank, seed=0, use_planner=True, config=None):
         if use_planner:
             env = NavAviaryWithPlanner(
                 scenario=scenario,
-                gui=False,
+                gui=gui,
+                watch_fps=watch_fps,
+                fixed_map=fixed_map,
+                show_trajectory=show_paths,
                 use_planner=True,
                 replan_freq=0,
                 waypoint_threshold=config.WAYPOINT_THRESHOLD,
@@ -289,7 +312,11 @@ def make_env_stage0(rank, seed=0, use_planner=True, config=None):
         else:
             env = NavAviary(
                 scenario=scenario,
-                gui=False
+                gui=gui,
+                watch_fps=watch_fps,
+                fixed_map=fixed_map,
+                show_trajectory=show_paths,
+                num_drones=swarm_drones
             )
 
         env = Monitor(env)
@@ -297,7 +324,8 @@ def make_env_stage0(rank, seed=0, use_planner=True, config=None):
     return _init
 
 
-def make_env_stage1(rank, seed=0, use_planner=True, config=None):
+def make_env_stage1(rank, seed=0, use_planner=True, config=None, gui=False, watch_fps=None,
+                    fixed_map=False, show_paths=False, swarm_drones=1):
     """Create Stage 1 environment (static obstacles)."""
     def _init():
         scenario = Stage1Scenario(seed=seed + rank)
@@ -305,7 +333,10 @@ def make_env_stage1(rank, seed=0, use_planner=True, config=None):
         if use_planner:
             env = NavAviaryWithPlanner(
                 scenario=scenario,
-                gui=False,
+                gui=gui,
+                watch_fps=watch_fps,
+                fixed_map=fixed_map,
+                show_trajectory=show_paths,
                 use_planner=True,
                 replan_freq=0,
                 waypoint_threshold=config.WAYPOINT_THRESHOLD,
@@ -321,7 +352,11 @@ def make_env_stage1(rank, seed=0, use_planner=True, config=None):
         else:
             env = NavAviary(
                 scenario=scenario,
-                gui=False
+                gui=gui,
+                watch_fps=watch_fps,
+                fixed_map=fixed_map,
+                show_trajectory=show_paths,
+                num_drones=swarm_drones
             )
 
         env = Monitor(env)
@@ -329,7 +364,8 @@ def make_env_stage1(rank, seed=0, use_planner=True, config=None):
     return _init
 
 
-def make_env_pretrain(rank, seed=0, obstacle_type='random', config=None):
+def make_env_pretrain(rank, seed=0, obstacle_type='random', config=None, gui=False, watch_fps=None,
+                      fixed_map=False, show_paths=False, swarm_drones=1):
     """Create Pretrain environment (diverse obstacles, no planner)."""
     def _init():
         from scenarios.stage_pretrain import StagePretrainScenario
@@ -342,7 +378,11 @@ def make_env_pretrain(rank, seed=0, obstacle_type='random', config=None):
         # Pretrain NEVER uses planner
         env = NavAviary(
             scenario=scenario,
-            gui=False
+            gui=gui,
+            watch_fps=watch_fps,
+            fixed_map=fixed_map,
+            show_trajectory=show_paths,
+            num_drones=swarm_drones
         )
 
         env = Monitor(env)
@@ -367,6 +407,18 @@ def main():
                         help='Continue training from checkpoint')
     parser.add_argument('--debug', action='store_true',
                         help='Enable debug mode (detailed logging and metrics)')
+    parser.add_argument('--watch', action='store_true',
+                        help='Watch training in PyBullet GUI (forces n-envs=1, fixed map, trajectory rendering)')
+    parser.add_argument('--watch-fps', type=float, default=30.0,
+                        help='Target FPS for watch mode (default: 30)')
+    parser.add_argument('--fixed-map', action='store_true',
+                        help='Keep same start/goal/obstacles across episodes')
+    parser.add_argument('--show-paths', action='store_true',
+                        help='Draw drone trajectory in GUI during training')
+    parser.add_argument('--no-show-paths', action='store_true',
+                        help='Disable trajectory drawing even in watch mode')
+    parser.add_argument('--swarm-drones', type=int, default=1,
+                        help='Number of drones in one shared map (parallel in one env)')
 
     args = parser.parse_args()
 
@@ -389,6 +441,32 @@ def main():
 
     # Set default n_envs
     n_envs = args.n_envs if args.n_envs is not None else config.N_ENVS
+    watch_mode = args.watch
+    fixed_map = args.fixed_map or watch_mode
+    show_paths = (args.show_paths or watch_mode) and (not args.no_show_paths)
+    swarm_drones = args.swarm_drones
+
+    if swarm_drones < 1:
+        parser.error("--swarm-drones must be >= 1")
+
+    if swarm_drones > 1:
+        if use_planner:
+            parser.error("Swarm mode currently supports only non-planner envs. Use --no-planner or --stage pretrain.")
+        if n_envs != 1:
+            print(f"[SWARM] Requested n_envs={n_envs}, forcing n_envs=1 (swarm parallelism is inside one env)")
+            n_envs = 1
+        if not fixed_map:
+            print("[SWARM] Enabling fixed map for shared-map swarm training")
+            fixed_map = True
+
+    if watch_mode:
+        if args.watch_fps <= 0:
+            parser.error("--watch-fps must be > 0")
+        if n_envs != 1:
+            print(f"[WATCH] Requested n_envs={n_envs}, forcing n_envs=1 for GUI mode")
+            n_envs = 1
+        if swarm_drones > 1 and args.watch_fps <= 30:
+            print("[WATCH] For smoother swarm rendering use --watch-fps 60..120")
 
     # Set default timesteps
     if args.timesteps is None:
@@ -426,6 +504,16 @@ def main():
         normalize_path = f"models/vec_normalize_pretrain_{obstacle_type}.pkl"
         log_name = f"PPO_pretrain_{obstacle_type}"
 
+    # Use separate checkpoints/logs for swarm runs to avoid shape mismatch with single-drone artifacts.
+    if swarm_drones > 1:
+        swarm_suffix = f"_swarm{swarm_drones}"
+        model_path = f"{model_path}{swarm_suffix}"
+        if normalize_path.endswith(".pkl"):
+            normalize_path = normalize_path[:-4] + f"{swarm_suffix}.pkl"
+        else:
+            normalize_path = f"{normalize_path}{swarm_suffix}"
+        log_name = f"{log_name}{swarm_suffix}"
+
     # Print configuration
     print("=" * 60)
     print(f"DRONE NAVIGATION TRAINING - STAGE {stage.upper()}")
@@ -441,6 +529,12 @@ def main():
     print(f"  Use planner: {use_planner}")
     print(f"  Total timesteps: {timesteps:,}")
     print(f"  Parallel envs: {n_envs}")
+    print(f"  Watch mode: {watch_mode}")
+    print(f"  Fixed map: {fixed_map}")
+    print(f"  Show paths: {show_paths}")
+    print(f"  Swarm drones: {swarm_drones}")
+    if watch_mode:
+        print(f"  Watch FPS: {args.watch_fps}")
     print(f"  Arena: {config.ARENA_SIZE_X}x{config.ARENA_SIZE_Y}x{config.ARENA_HEIGHT}m")
     print(f"  Model path: {model_path}")
 
@@ -480,13 +574,29 @@ def main():
     # Create environments
     print(f"\n[SETUP] Creating environments...")
     if stage == '0':
-        env_fns = [make_env_stage0(i, config.SEED, use_planner, config) for i in range(n_envs)]
+        env_fns = [make_env_stage0(i, config.SEED, use_planner, config,
+                                   gui=watch_mode, watch_fps=args.watch_fps,
+                                   fixed_map=fixed_map, show_paths=show_paths,
+                                   swarm_drones=swarm_drones)
+                   for i in range(n_envs)]
     elif stage == '1':
-        env_fns = [make_env_stage1(i, config.SEED, use_planner, config) for i in range(n_envs)]
+        env_fns = [make_env_stage1(i, config.SEED, use_planner, config,
+                                   gui=watch_mode, watch_fps=args.watch_fps,
+                                   fixed_map=fixed_map, show_paths=show_paths,
+                                   swarm_drones=swarm_drones)
+                   for i in range(n_envs)]
     else:  # pretrain
-        env_fns = [make_env_pretrain(i, config.SEED, args.obstacle_type, config) for i in range(n_envs)]
+        env_fns = [make_env_pretrain(i, config.SEED, args.obstacle_type, config,
+                                     gui=watch_mode, watch_fps=args.watch_fps,
+                                     fixed_map=fixed_map, show_paths=show_paths,
+                                     swarm_drones=swarm_drones)
+                   for i in range(n_envs)]
 
-    vec_env = SubprocVecEnv(env_fns)
+    if watch_mode:
+        vec_env = DummyVecEnv(env_fns)
+        print("✓ DummyVecEnv created (watch mode)")
+    else:
+        vec_env = SubprocVecEnv(env_fns)
 
     # Load or create model
     if args.continue_training and checkpoint_exists:

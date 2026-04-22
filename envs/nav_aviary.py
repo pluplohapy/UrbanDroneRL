@@ -4,39 +4,87 @@ Inherits from BaseRLAviary and implements velocity control.
 """
 
 import numpy as np
+import time
 import pybullet as p
 from gymnasium import spaces
 from gym_pybullet_drones.envs.BaseRLAviary import BaseRLAviary
 from gym_pybullet_drones.utils.enums import DroneModel, Physics, ActionType, ObservationType
 from envs.raycasts import RaycastSensor
+from envs.visualization_utils import draw_goal_marker
 import config
 
 
 class NavAviary(BaseRLAviary):
     """Navigation environment with velocity control."""
 
-    def __init__(self, scenario, gui: bool = False, physics=Physics.PYB):
+    def __init__(self, scenario, gui: bool = False, watch_fps: float = None,
+                 fixed_map: bool = False, show_trajectory: bool = False,
+                 num_drones: int = 1, physics=Physics.PYB):
         """
         Initialize navigation environment.
 
         Args:
             scenario: Scenario object providing obstacles and start/goal
             gui: Whether to show PyBullet GUI
+            watch_fps: Optional target FPS when GUI is enabled (for watch mode)
+            fixed_map: Keep same start/goal/obstacles across episodes
+            show_trajectory: Draw drone trajectory in GUI
+            num_drones: Number of drones in one shared environment
             physics: Physics engine (must be Physics.PYB)
         """
+        if num_drones < 1:
+            raise ValueError("num_drones must be >= 1")
+
         self.scenario = scenario
         self.start_pos = None
         self.goal_pos = None
+        self.start_pos_all = None
+        self.goal_pos_all = None
         self.prev_dist_to_goal = None
 
         # Get arena bounds from scenario config
         self.arena_size_x = scenario.config.ARENA_SIZE_X
         self.arena_size_y = scenario.config.ARENA_SIZE_Y
         self.arena_height = scenario.config.ARENA_HEIGHT
+        self.num_drones = num_drones
+        self.swarm_mode = num_drones > 1
         self.control_step_counter = 0  # Renamed to avoid conflict with BaseRLAviary
-        self.prev_action = np.zeros(4)
-        self.prev_prev_action = np.zeros(4)  # Для smoothness penalty
-        self.visited_cells = set()  # For exploration bonus
+        if self.swarm_mode:
+            self.prev_action = np.zeros((self.num_drones, 4))
+            self.prev_prev_action = np.zeros((self.num_drones, 4))
+            self.visited_cells = [set() for _ in range(self.num_drones)]
+        else:
+            self.prev_action = np.zeros(4)
+            self.prev_prev_action = np.zeros(4)  # Для smoothness penalty
+            self.visited_cells = set()  # For exploration bonus
+        self.fixed_map = fixed_map
+        self.show_trajectory = show_trajectory and gui
+        self._trajectory_prev_pos = None
+        self._fixed_map_initialized = False
+        self._fixed_start_pos = None
+        self._fixed_goal_pos = None
+        self._fixed_obstacle_specs = []
+        self._watch_step_duration = None
+        self._last_watch_step_ts = None
+        self.swarm_successes_total = 0
+        self.swarm_crashes_total = 0
+        self.swarm_respawns_total = 0
+        self._trajectory_draw_every = 6 if self.swarm_mode else 1
+        self._trajectory_line_life = 3.0 if self.swarm_mode else 0.0
+        self._trajectory_line_width = 1 if self.swarm_mode else 3
+        self._swarm_colors = [
+            [1.0, 0.2, 0.2],
+            [0.2, 1.0, 0.2],
+            [0.2, 0.6, 1.0],
+            [1.0, 0.8, 0.2],
+            [1.0, 0.2, 0.8],
+            [0.2, 1.0, 1.0],
+            [0.9, 0.6, 0.3],
+            [0.6, 0.4, 1.0],
+        ]
+
+        if gui and watch_fps is not None and watch_fps > 0:
+            self._watch_step_duration = 1.0 / watch_fps
 
         # Debug tracking
         self.episode_trajectory = []  # List of positions
@@ -60,7 +108,7 @@ class NavAviary(BaseRLAviary):
         # Call parent constructor
         super().__init__(
             drone_model=DroneModel.CF2X,
-            num_drones=1,
+            num_drones=self.num_drones,
             neighbourhood_radius=np.inf,
             physics=physics,
             pyb_freq=config.PYB_FREQ,
@@ -70,6 +118,426 @@ class NavAviary(BaseRLAviary):
             obs=ObservationType.KIN,
             act=ActionType.VEL
         )
+        # Disable heavy GUI debug controls/overlays for better rendering FPS.
+        self.USER_DEBUG = False
+
+    def _apply_watch_timing(self):
+        """Throttle GUI simulation speed in watch mode."""
+        if self._watch_step_duration is None:
+            return
+
+        now = time.time()
+        if self._last_watch_step_ts is not None:
+            elapsed = now - self._last_watch_step_ts
+            remaining = self._watch_step_duration - elapsed
+            if remaining > 0:
+                time.sleep(remaining)
+                now = time.time()
+        self._last_watch_step_ts = now
+
+    def _optimize_gui_rendering(self):
+        """Disable expensive PyBullet GUI overlays for faster rendering."""
+        if not self.GUI:
+            return
+        p.configureDebugVisualizer(p.COV_ENABLE_GUI, 0, physicsClientId=self.CLIENT)
+        p.configureDebugVisualizer(p.COV_ENABLE_RGB_BUFFER_PREVIEW, 0, physicsClientId=self.CLIENT)
+        p.configureDebugVisualizer(p.COV_ENABLE_DEPTH_BUFFER_PREVIEW, 0, physicsClientId=self.CLIENT)
+        p.configureDebugVisualizer(p.COV_ENABLE_SEGMENTATION_MARK_PREVIEW, 0, physicsClientId=self.CLIENT)
+
+    def _sample_start_goal(self):
+        """Sample start/goal pair for a new map."""
+        if hasattr(self.scenario, '_generate_start_goal_zones'):
+            return self.scenario._generate_start_goal_zones()
+        return self.scenario._generate_start_goal()
+
+    def _get_swarm_offsets(self):
+        """Generate deterministic offsets for swarm spawn/goal positions."""
+        side = int(np.ceil(np.sqrt(self.num_drones)))
+        indices = np.arange(self.num_drones)
+        row = indices // side
+        col = indices % side
+
+        # Keep formation compact and safely inside arena width
+        spacing_x = min(0.5, max(0.2, (self.arena_size_x - 1.0) / max(1, side - 1)))
+        spacing_y = min(0.5, max(0.2, (self.arena_size_y - 1.0) / max(1, side - 1)))
+
+        offsets = np.zeros((self.num_drones, 3), dtype=float)
+        offsets[:, 0] = (col - (side - 1) / 2.0) * spacing_x
+        offsets[:, 1] = (row - (side - 1) / 2.0) * spacing_y
+        return offsets
+
+    def _build_swarm_positions(self, base_start, base_goal):
+        """Create per-drone start/goal positions for swarm mode."""
+        offsets = self._get_swarm_offsets()
+        starts = np.array(base_start, dtype=float) + offsets
+        goals = np.array(base_goal, dtype=float) + offsets
+
+        margin_xy = 0.3
+        starts[:, 0] = np.clip(starts[:, 0], -self.arena_size_x / 2 + margin_xy, self.arena_size_x / 2 - margin_xy)
+        starts[:, 1] = np.clip(starts[:, 1], -self.arena_size_y / 2 + margin_xy, self.arena_size_y / 2 - margin_xy)
+        goals[:, 0] = np.clip(goals[:, 0], -self.arena_size_x / 2 + margin_xy, self.arena_size_x / 2 - margin_xy)
+        goals[:, 1] = np.clip(goals[:, 1], -self.arena_size_y / 2 + margin_xy, self.arena_size_y / 2 - margin_xy)
+        starts[:, 2] = np.clip(starts[:, 2], 0.5, self.arena_height - 0.2)
+        goals[:, 2] = np.clip(goals[:, 2], 0.5, self.arena_height - 0.2)
+        return starts, goals
+
+    def _disable_inter_drone_collisions(self):
+        """Disable drone-drone collisions for stable parallel rollout."""
+        if not self.swarm_mode:
+            return
+        for i in range(self.num_drones):
+            for j in range(i + 1, self.num_drones):
+                p.setCollisionFilterPair(
+                    bodyUniqueIdA=int(self.DRONE_IDS[i]),
+                    bodyUniqueIdB=int(self.DRONE_IDS[j]),
+                    linkIndexA=-1,
+                    linkIndexB=-1,
+                    enableCollision=0,
+                    physicsClientId=self.CLIENT
+                )
+
+    def _check_drone_terminal(self, drone_id):
+        """Return terminal flags for one drone in swarm mode."""
+        drone_pos = self._getDroneStateVector(drone_id)[:3]
+        goal = self.goal_pos_all[drone_id]
+        dist_to_goal = np.linalg.norm(goal - drone_pos)
+        is_success = dist_to_goal < config.SUCCESS_DIST
+
+        contact_points = p.getContactPoints(bodyA=self.DRONE_IDS[drone_id], physicsClientId=self.CLIENT) or []
+        out_of_bounds = (
+            abs(drone_pos[0]) > self.arena_size_x / 2 or
+            abs(drone_pos[1]) > self.arena_size_y / 2 or
+            drone_pos[2] < 0.1 or
+            drone_pos[2] > self.arena_height
+        )
+        is_crash = (len(contact_points) > 0) or out_of_bounds
+        return is_success, is_crash
+
+    def _respawn_drone(self, drone_id):
+        """Respawn one drone at its start location (swarm mode)."""
+        start = self.start_pos_all[drone_id]
+        p.resetBasePositionAndOrientation(
+            self.DRONE_IDS[drone_id],
+            start,
+            [0, 0, 0, 1],
+            physicsClientId=self.CLIENT
+        )
+        p.resetBaseVelocity(
+            self.DRONE_IDS[drone_id],
+            linearVelocity=[0, 0, 0],
+            angularVelocity=[0, 0, 0],
+            physicsClientId=self.CLIENT
+        )
+        self.prev_dist_to_goal[drone_id] = np.linalg.norm(self.goal_pos_all[drone_id] - start)
+        self.visited_cells[drone_id] = set()
+        if self.show_trajectory and self.GUI and self._trajectory_prev_pos is not None:
+            self._trajectory_prev_pos[drone_id] = None
+
+    def _generate_obstacles_for_current_map(self):
+        """Generate obstacles for the current start/goal pair."""
+        self.scenario.obstacles = []
+
+        if hasattr(self.scenario, '_generate_obstacles'):
+            obstacle_type = self.scenario.obstacle_type
+            if obstacle_type == 'random':
+                chosen_type = self.scenario.rng.choice(list(self.scenario.config.OBSTACLE_TYPES.keys()))
+            else:
+                chosen_type = obstacle_type
+            self.scenario._generate_obstacles(chosen_type, self.start_pos, self.goal_pos, self.CLIENT)
+            return
+
+        if hasattr(self.scenario, 'n_obstacles'):
+            from envs.obstacles import StaticObstacle
+
+            self.scenario.n_obstacles = self.scenario.rng.randint(
+                self.scenario.config.STAGE1_N_OBSTACLES[0],
+                self.scenario.config.STAGE1_N_OBSTACLES[1] + 1
+            )
+            for _ in range(self.scenario.n_obstacles):
+                radius = self.scenario.rng.uniform(
+                    self.scenario.config.STAGE1_RADIUS[0],
+                    self.scenario.config.STAGE1_RADIUS[1]
+                )
+                for _ in range(50):
+                    x = self.scenario.rng.uniform(-self.scenario.config.ARENA_SIZE_X / 2 + 1,
+                                                   self.scenario.config.ARENA_SIZE_X / 2 - 1)
+                    y = self.scenario.rng.uniform(-self.scenario.config.ARENA_SIZE_Y / 2 + 1,
+                                                   self.scenario.config.ARENA_SIZE_Y / 2 - 1)
+                    pos = np.array([x, y, 0.0])
+
+                    dist_to_start = np.linalg.norm(pos[:2] - self.start_pos[:2])
+                    dist_to_goal = np.linalg.norm(pos[:2] - self.goal_pos[:2])
+
+                    if (dist_to_start < self.scenario.config.MIN_CLEARANCE + radius or
+                            dist_to_goal < self.scenario.config.MIN_CLEARANCE + radius):
+                        continue
+
+                    obstacle = StaticObstacle(
+                        position=pos,
+                        radius=radius,
+                        height=self.scenario.config.ARENA_HEIGHT,
+                        physics_client=self.CLIENT
+                    )
+                    self.scenario.obstacles.append(obstacle)
+                    break
+            return
+
+        # Stage 0 has no obstacles
+        self.scenario.obstacles = []
+
+    def _serialize_obstacles(self):
+        """Serialize generated obstacles so fixed-map mode can recreate them."""
+        specs = []
+        for obstacle in self.scenario.obstacles:
+            obstacle_type = obstacle.__class__.__name__
+            if obstacle_type == 'StaticObstacle':
+                specs.append({
+                    'type': obstacle_type,
+                    'position': np.array(obstacle.position, dtype=float).tolist(),
+                    'radius': float(obstacle.radius),
+                    'height': float(obstacle.height)
+                })
+            elif obstacle_type == 'CylinderObstacle':
+                specs.append({
+                    'type': obstacle_type,
+                    'position': np.array(obstacle.position, dtype=float).tolist(),
+                    'radius': float(obstacle.radius),
+                    'height': float(obstacle.height)
+                })
+            elif obstacle_type == 'SphereObstacle':
+                specs.append({
+                    'type': obstacle_type,
+                    'position': np.array(obstacle.initial_position, dtype=float).tolist(),
+                    'radius': float(obstacle.radius),
+                    'speed': float(obstacle.speed),
+                    'amplitude': float(obstacle.amplitude),
+                    'frequency': float(obstacle.frequency),
+                    'direction': np.array(obstacle.direction, dtype=float).tolist()
+                })
+            elif obstacle_type == 'WallObstacle':
+                specs.append({
+                    'type': obstacle_type,
+                    'position': np.array(obstacle.position, dtype=float).tolist(),
+                    'width': float(obstacle.width),
+                    'height': float(obstacle.height),
+                    'thickness': float(obstacle.thickness)
+                })
+            elif obstacle_type == 'BeamObstacle':
+                specs.append({
+                    'type': obstacle_type,
+                    'position': np.array(obstacle.position, dtype=float).tolist(),
+                    'length': float(obstacle.length),
+                    'height': float(obstacle.height),
+                    'thickness': float(obstacle.thickness),
+                    'swing_angle': float(np.degrees(obstacle.swing_angle)),
+                    'swing_period': float(obstacle.swing_period)
+                })
+            elif obstacle_type == 'BoxObstacle':
+                specs.append({
+                    'type': obstacle_type,
+                    'position': np.array(obstacle.position, dtype=float).tolist(),
+                    'size': float(obstacle.size),
+                    'height': float(obstacle.height)
+                })
+            elif obstacle_type == 'SwingingStickObstacle':
+                specs.append({
+                    'type': obstacle_type,
+                    'position': np.array(obstacle.initial_position, dtype=float).tolist(),
+                    'length': float(obstacle.length),
+                    'thickness': float(obstacle.thickness),
+                    'swing_angle': float(np.degrees(obstacle.swing_angle)),
+                    'swing_period': float(obstacle.swing_period),
+                    'vertical_swing': bool(obstacle.vertical_swing),
+                    'vertical_amplitude': float(obstacle.vertical_amplitude)
+                })
+        return specs
+
+    def _restore_obstacles_from_specs(self):
+        """Restore cached obstacles for fixed-map mode."""
+        self.scenario.obstacles = []
+        if not self._fixed_obstacle_specs:
+            if hasattr(self.scenario, 'n_obstacles'):
+                self.scenario.n_obstacles = 0
+            return
+
+        from envs.obstacles import StaticObstacle
+        from scenarios.pretrain_obstacles import (
+            CylinderObstacle,
+            SphereObstacle,
+            WallObstacle,
+            BeamObstacle,
+            BoxObstacle,
+            SwingingStickObstacle
+        )
+
+        for spec in self._fixed_obstacle_specs:
+            obstacle = None
+            obstacle_type = spec.get('type')
+
+            if obstacle_type == 'StaticObstacle':
+                obstacle = StaticObstacle(
+                    position=np.array(spec['position'], dtype=float),
+                    radius=spec['radius'],
+                    height=spec['height'],
+                    physics_client=self.CLIENT
+                )
+            elif obstacle_type == 'CylinderObstacle':
+                obstacle = CylinderObstacle(
+                    position=np.array(spec['position'], dtype=float),
+                    radius=spec['radius'],
+                    height=spec['height'],
+                    physics_client=self.CLIENT
+                )
+            elif obstacle_type == 'SphereObstacle':
+                obstacle = SphereObstacle(
+                    position=np.array(spec['position'], dtype=float),
+                    radius=spec['radius'],
+                    speed=spec['speed'],
+                    amplitude=spec['amplitude'],
+                    frequency=spec['frequency'],
+                    physics_client=self.CLIENT
+                )
+                if 'direction' in spec:
+                    obstacle.direction = np.array(spec['direction'], dtype=float)
+            elif obstacle_type == 'WallObstacle':
+                obstacle = WallObstacle(
+                    position=np.array(spec['position'], dtype=float),
+                    width=spec['width'],
+                    height=spec['height'],
+                    thickness=spec['thickness'],
+                    physics_client=self.CLIENT
+                )
+            elif obstacle_type == 'BeamObstacle':
+                obstacle = BeamObstacle(
+                    position=np.array(spec['position'], dtype=float),
+                    length=spec['length'],
+                    height=spec['height'],
+                    thickness=spec['thickness'],
+                    swing_angle=spec['swing_angle'],
+                    swing_period=spec['swing_period'],
+                    physics_client=self.CLIENT
+                )
+            elif obstacle_type == 'BoxObstacle':
+                obstacle = BoxObstacle(
+                    position=np.array(spec['position'], dtype=float),
+                    size=spec['size'],
+                    height=spec['height'],
+                    physics_client=self.CLIENT
+                )
+            elif obstacle_type == 'SwingingStickObstacle':
+                obstacle = SwingingStickObstacle(
+                    position=np.array(spec['position'], dtype=float),
+                    length=spec['length'],
+                    thickness=spec['thickness'],
+                    swing_angle=spec['swing_angle'],
+                    swing_period=spec['swing_period'],
+                    physics_client=self.CLIENT,
+                    vertical_swing=spec.get('vertical_swing', False),
+                    vertical_amplitude=spec.get('vertical_amplitude', 0.15)
+                )
+            else:
+                print(f"[WARN] Unsupported obstacle type in fixed-map cache: {obstacle_type}")
+
+            if obstacle is not None:
+                self.scenario.obstacles.append(obstacle)
+
+        if hasattr(self.scenario, 'n_obstacles'):
+            self.scenario.n_obstacles = len(self.scenario.obstacles)
+
+    def _draw_watch_markers(self):
+        """Draw markers for watch mode."""
+        if not (self.show_trajectory and self.GUI):
+            return
+
+        if self.swarm_mode:
+            starts = self.start_pos_all
+            goals = self.goal_pos_all
+            for i in range(self.num_drones):
+                color = self._swarm_colors[i % len(self._swarm_colors)]
+                goal = goals[i]
+                start = starts[i]
+                p.addUserDebugLine(
+                    [goal[0] - 0.15, goal[1], goal[2]],
+                    [goal[0] + 0.15, goal[1], goal[2]],
+                    color,
+                    2,
+                    0,
+                    physicsClientId=self.CLIENT
+                )
+                p.addUserDebugLine(
+                    [goal[0], goal[1] - 0.15, goal[2]],
+                    [goal[0], goal[1] + 0.15, goal[2]],
+                    color,
+                    2,
+                    0,
+                    physicsClientId=self.CLIENT
+                )
+                p.addUserDebugLine(
+                    [start[0] - 0.12, start[1], start[2]],
+                    [start[0] + 0.12, start[1], start[2]],
+                    [0.2, 0.8, 1.0],
+                    2,
+                    0,
+                    physicsClientId=self.CLIENT
+                )
+        else:
+            draw_goal_marker(self.goal_pos, self.CLIENT)
+            start = self.start_pos
+            p.addUserDebugLine(
+                [start[0] - 0.2, start[1], start[2]],
+                [start[0] + 0.2, start[1], start[2]],
+                [0.2, 0.8, 1.0],
+                3,
+                0,
+                physicsClientId=self.CLIENT
+            )
+            p.addUserDebugLine(
+                [start[0], start[1] - 0.2, start[2]],
+                [start[0], start[1] + 0.2, start[2]],
+                [0.2, 0.8, 1.0],
+                3,
+                0,
+                physicsClientId=self.CLIENT
+            )
+
+    def _draw_trajectory_segment(self):
+        """Draw one trajectory segment in GUI."""
+        if not (self.show_trajectory and self.GUI):
+            return
+
+        # Limit draw rate to avoid GUI slowdown in swarm mode.
+        if self.control_step_counter % self._trajectory_draw_every != 0:
+            return
+
+        if self.swarm_mode:
+            if self._trajectory_prev_pos is None:
+                self._trajectory_prev_pos = [None for _ in range(self.num_drones)]
+            for i in range(self.num_drones):
+                drone_pos = self._getDroneStateVector(i)[:3]
+                prev_pos = self._trajectory_prev_pos[i]
+                if prev_pos is not None:
+                    color = self._swarm_colors[i % len(self._swarm_colors)]
+                    p.addUserDebugLine(
+                        prev_pos,
+                        drone_pos,
+                        color,
+                        self._trajectory_line_width,
+                        self._trajectory_line_life,
+                        physicsClientId=self.CLIENT
+                    )
+                self._trajectory_prev_pos[i] = drone_pos.copy()
+        else:
+            drone_pos = self._getDroneStateVector(0)[:3]
+            if self._trajectory_prev_pos is not None:
+                p.addUserDebugLine(
+                    self._trajectory_prev_pos,
+                    drone_pos,
+                    [1.0, 0.2, 0.2],
+                    self._trajectory_line_width,
+                    self._trajectory_line_life,
+                    physicsClientId=self.CLIENT
+                )
+            self._trajectory_prev_pos = drone_pos.copy()
 
     def _preprocessAction(self, action):
         """
@@ -131,6 +599,8 @@ class NavAviary(BaseRLAviary):
         Returns:
             Box space for [vx, vy, vz, yaw_rate] normalized to [-1, 1]
         """
+        if self.swarm_mode:
+            return spaces.Box(low=-1.0, high=1.0, shape=(self.num_drones, 4), dtype=np.float32)
         return spaces.Box(low=-1.0, high=1.0, shape=(4,), dtype=np.float32)
 
     def _observationSpace(self):
@@ -141,6 +611,8 @@ class NavAviary(BaseRLAviary):
         Returns:
             Box space for 33-dimensional observation
         """
+        if self.swarm_mode:
+            return spaces.Box(low=-1.0, high=1.0, shape=(self.num_drones, 33), dtype=np.float32)
         return spaces.Box(low=-1.0, high=1.0, shape=(33,), dtype=np.float32)
 
     def _computeObs(self):
@@ -151,55 +623,74 @@ class NavAviary(BaseRLAviary):
         Returns:
             np.ndarray of shape (33,)
         """
-        # Get drone state
+        max_dist = np.sqrt(self.arena_size_x ** 2 + self.arena_size_y ** 2 + self.arena_height ** 2)
+
+        if self.swarm_mode:
+            obs_all = np.zeros((self.num_drones, 33), dtype=np.float32)
+            for i in range(self.num_drones):
+                state = self._getDroneStateVector(i)
+                drone_pos = state[:3]
+                drone_quat = state[3:7]
+                drone_vel = state[10:13]
+                goal = self.goal_pos_all[i]
+
+                goal_world = goal - drone_pos
+                rot_matrix = np.array(p.getMatrixFromQuaternion(drone_quat)).reshape(3, 3)
+                goal_body = rot_matrix.T @ goal_world
+                goal_body_norm = goal_body / max_dist
+
+                dist_to_goal = np.linalg.norm(goal_world)
+                dist_to_goal_norm = np.clip(dist_to_goal / max_dist, 0, 1)
+
+                vel_body = rot_matrix.T @ drone_vel
+                vel_norm = np.clip(vel_body / np.array([config.VX_MAX, config.VY_MAX, config.VZ_MAX]), -1, 1)
+
+                height_norm = drone_pos[2] / self.arena_height
+                qx, qy, qz, qw = drone_quat
+                yaw = np.arctan2(2.0 * (qw * qz + qx * qy), 1.0 - 2.0 * (qy ** 2 + qz ** 2))
+                yaw_norm = yaw / np.pi
+                prev_action = self.prev_action[i]
+                raycasts = self.raycast_sensor.cast_rays(drone_pos, drone_quat, self.CLIENT)
+
+                obs_all[i] = np.concatenate([
+                    goal_body_norm,
+                    [dist_to_goal_norm],
+                    vel_norm,
+                    [height_norm],
+                    [yaw_norm],
+                    prev_action,
+                    raycasts
+                ])
+            return obs_all.astype(np.float32)
+
+        # Single-drone mode
         drone_pos = self._getDroneStateVector(0)[:3]
         drone_quat = self._getDroneStateVector(0)[3:7]
         drone_vel = self._getDroneStateVector(0)[10:13]
-
-        # 1. Goal in body frame (3)
         goal_world = self.goal_pos - drone_pos
         rot_matrix = np.array(p.getMatrixFromQuaternion(drone_quat)).reshape(3, 3)
         goal_body = rot_matrix.T @ goal_world
-
-        # Normalize goal vector
-        max_dist = np.sqrt(self.arena_size_x**2 + self.arena_size_y**2 + self.arena_height**2)
         goal_body_norm = goal_body / max_dist
-
-        # 2. Distance to goal (1)
         dist_to_goal = np.linalg.norm(goal_world)
         dist_to_goal_norm = np.clip(dist_to_goal / max_dist, 0, 1)
-
-        # 3. Linear velocity in body frame, normalized (3)
         vel_body = rot_matrix.T @ drone_vel
         vel_norm = np.clip(vel_body / np.array([config.VX_MAX, config.VY_MAX, config.VZ_MAX]), -1, 1)
-
-        # 4. Normalized height (1)
         height_norm = drone_pos[2] / self.arena_height
-
-        # 5. Yaw angle (1) - НОВОЕ!
-        # Extract yaw from quaternion
         qx, qy, qz, qw = drone_quat
         yaw = np.arctan2(2.0 * (qw * qz + qx * qy), 1.0 - 2.0 * (qy**2 + qz**2))
-        # Normalize to [-1, 1] (yaw is in [-pi, pi])
         yaw_norm = yaw / np.pi
-
-        # 6. Previous action (4)
         prev_action = self.prev_action
-
-        # 7. Raycasts (20)
         raycasts = self.raycast_sensor.cast_rays(drone_pos, drone_quat, self.CLIENT)
 
-        # Concatenate all features
         obs = np.concatenate([
-            goal_body_norm,        # 3
-            [dist_to_goal_norm],   # 1
-            vel_norm,              # 3
-            [height_norm],         # 1
-            [yaw_norm],            # 1
-            prev_action,           # 4
-            raycasts               # 20
+            goal_body_norm,
+            [dist_to_goal_norm],
+            vel_norm,
+            [height_norm],
+            [yaw_norm],
+            prev_action,
+            raycasts
         ])
-
         return obs.astype(np.float32)
 
     def _log_reward_component(self, name: str, value: float) -> float:
@@ -224,6 +715,57 @@ class NavAviary(BaseRLAviary):
         Returns:
             float reward value
         """
+        if self.swarm_mode:
+            total_reward = 0.0
+            for i in range(self.num_drones):
+                state = self._getDroneStateVector(i)
+                drone_pos = state[:3]
+                drone_quat = state[3:7]
+                drone_vel = state[10:13]
+                goal = self.goal_pos_all[i]
+                curr_dist = np.linalg.norm(goal - drone_pos)
+
+                progress = self.prev_dist_to_goal[i] - curr_dist
+                reward_i = config.REWARD_PROGRESS_SCALE * progress
+
+                goal_world = goal - drone_pos
+                goal_direction = goal_world / (np.linalg.norm(goal_world) + 1e-6)
+                velocity_towards_goal = np.dot(drone_vel, goal_direction)
+                reward_i += config.REWARD_VELOCITY_SCALE * max(0, velocity_towards_goal)
+
+                yaw_action = abs(self.prev_action[i, 3])
+                reward_i += -config.REWARD_YAW_PENALTY_SCALE * (yaw_action ** 2)
+
+                speed = np.linalg.norm(drone_vel)
+                if speed > 0.1:
+                    vel_direction = drone_vel / speed
+                    heading_alignment = np.dot(vel_direction, goal_direction)
+                    reward_i += config.REWARD_HEADING_SCALE * max(0, heading_alignment)
+
+                action_change = np.linalg.norm(self.prev_action[i] - self.prev_prev_action[i])
+                reward_i += -config.REWARD_ACTION_SMOOTHNESS_SCALE * action_change
+
+                reward_i += config.REWARD_PROXIMITY_SCALE * np.exp(-curr_dist)
+                self.prev_dist_to_goal[i] = curr_dist
+
+                grid_x = int((drone_pos[0] + self.arena_size_x / 2) / config.EXPLORATION_GRID_SIZE)
+                grid_y = int((drone_pos[1] + self.arena_size_y / 2) / config.EXPLORATION_GRID_SIZE)
+                grid_z = int(drone_pos[2] / config.EXPLORATION_GRID_SIZE)
+                grid_key = (grid_x, grid_y, grid_z)
+                if grid_key not in self.visited_cells[i]:
+                    self.visited_cells[i].add(grid_key)
+                    reward_i += config.REWARD_EXPLORATION_BONUS
+
+                raycasts = self.raycast_sensor.cast_rays(drone_pos, drone_quat, self.CLIENT)
+                min_dist = np.min(raycasts) * config.RAY_LENGTH
+                if min_dist < config.REWARD_PROXIMITY_THRESHOLD:
+                    reward_i += -config.REWARD_PROXIMITY_SCALE * np.exp(-min_dist)
+
+                reward_i += -config.REWARD_STEP_PENALTY
+                total_reward += reward_i
+
+            return total_reward / self.num_drones
+
         drone_pos = self._getDroneStateVector(0)[:3]
         drone_quat = self._getDroneStateVector(0)[3:7]
         drone_vel = self._getDroneStateVector(0)[10:13]
@@ -357,6 +899,9 @@ class NavAviary(BaseRLAviary):
         Returns:
             bool indicating termination
         """
+        if self.swarm_mode:
+            return False
+
         drone_pos = self._getDroneStateVector(0)[:3]
 
         # Success: reached goal
@@ -398,6 +943,30 @@ class NavAviary(BaseRLAviary):
         Returns:
             dict with episode information
         """
+        if self.swarm_mode:
+            dists = []
+            min_rays = []
+            for i in range(self.num_drones):
+                state = self._getDroneStateVector(i)
+                drone_pos = state[:3]
+                drone_quat = state[3:7]
+                dists.append(np.linalg.norm(self.goal_pos_all[i] - drone_pos))
+                rays = self.raycast_sensor.cast_rays(drone_pos, drone_quat, self.CLIENT)
+                min_rays.append(np.min(rays) * config.RAY_LENGTH)
+
+            return {
+                "is_success": False,
+                "is_crash": False,
+                "dist_to_goal": float(np.mean(dists)),
+                "min_ray_dist": float(np.mean(min_rays)),
+                "step": self.control_step_counter,
+                "swarm_mode": True,
+                "swarm_n_drones": self.num_drones,
+                "swarm_successes": int(self.swarm_successes_total),
+                "swarm_crashes": int(self.swarm_crashes_total),
+                "swarm_respawns": int(self.swarm_respawns_total)
+            }
+
         drone_pos = self._getDroneStateVector(0)[:3]
         drone_quat = self._getDroneStateVector(0)[3:7]
         dist_to_goal = np.linalg.norm(self.goal_pos - drone_pos)
@@ -500,77 +1069,61 @@ class NavAviary(BaseRLAviary):
         Returns:
             observation, info
         """
-        # Generate start/goal positions BEFORE super().reset()
-        # (without creating obstacles yet)
-        if hasattr(self.scenario, '_generate_start_goal_zones'):
-            # For pretrain scenario
-            self.start_pos, self.goal_pos = self.scenario._generate_start_goal_zones()
+        # Sample map once and then keep it fixed across episodes if requested
+        if self.fixed_map and self._fixed_map_initialized:
+            base_start = self._fixed_start_pos.copy()
+            base_goal = self._fixed_goal_pos.copy()
         else:
-            # For stage0/stage1 scenarios
-            self.start_pos, self.goal_pos = self.scenario._generate_start_goal()
+            base_start, base_goal = self._sample_start_goal()
 
-        # Set INIT_XYZS to correct start position
-        self.INIT_XYZS = np.array([self.start_pos])
-        self.INIT_RPYS = np.array([[0, 0, 0]])
+        self.start_pos = base_start.copy()
+        self.goal_pos = base_goal.copy()
+
+        if self.swarm_mode:
+            self.start_pos_all, self.goal_pos_all = self._build_swarm_positions(base_start, base_goal)
+            self.INIT_XYZS = self.start_pos_all.copy()
+            self.INIT_RPYS = np.zeros((self.num_drones, 3))
+        else:
+            self.start_pos_all = np.array([self.start_pos.copy()])
+            self.goal_pos_all = np.array([self.goal_pos.copy()])
+            self.INIT_XYZS = np.array([self.start_pos])
+            self.INIT_RPYS = np.array([[0, 0, 0]])
 
         # Call parent reset (this calls p.resetSimulation() and spawns drone at INIT_XYZS)
         obs, info = super().reset(seed=seed, options=options)
+        self._optimize_gui_rendering()
 
-        # NOW create obstacles AFTER resetSimulation (using the same start/goal)
-        self.scenario.obstacles = []  # Clear old obstacles
-        if hasattr(self.scenario, '_generate_obstacles'):
-            # For pretrain scenario
-            obstacle_type = self.scenario.obstacle_type
-            if obstacle_type == 'random':
-                chosen_type = self.scenario.rng.choice(list(self.scenario.config.OBSTACLE_TYPES.keys()))
-            else:
-                chosen_type = obstacle_type
-            self.scenario._generate_obstacles(chosen_type, self.start_pos, self.goal_pos, self.CLIENT)
-        elif hasattr(self.scenario, 'n_obstacles'):
-            # For stage1 scenario - generate obstacles
-            from envs.obstacles import StaticObstacle
-            self.scenario.n_obstacles = self.scenario.rng.randint(
-                self.scenario.config.STAGE1_N_OBSTACLES[0],
-                self.scenario.config.STAGE1_N_OBSTACLES[1] + 1
-            )
-            for i in range(self.scenario.n_obstacles):
-                radius = self.scenario.rng.uniform(
-                    self.scenario.config.STAGE1_RADIUS[0],
-                    self.scenario.config.STAGE1_RADIUS[1]
-                )
-                for attempt in range(50):
-                    x = self.scenario.rng.uniform(-self.scenario.config.ARENA_SIZE_X/2 + 1,
-                                                   self.scenario.config.ARENA_SIZE_X/2 - 1)
-                    y = self.scenario.rng.uniform(-self.scenario.config.ARENA_SIZE_Y/2 + 1,
-                                                   self.scenario.config.ARENA_SIZE_Y/2 - 1)
-                    pos = np.array([x, y, 0.0])
+        # Create or restore obstacles AFTER resetSimulation
+        if self.fixed_map and self._fixed_map_initialized:
+            self._restore_obstacles_from_specs()
+        else:
+            self._generate_obstacles_for_current_map()
+            if self.fixed_map:
+                self._fixed_start_pos = base_start.copy()
+                self._fixed_goal_pos = base_goal.copy()
+                self._fixed_obstacle_specs = self._serialize_obstacles()
+                self._fixed_map_initialized = True
 
-                    dist_to_start = np.linalg.norm(pos[:2] - self.start_pos[:2])
-                    dist_to_goal = np.linalg.norm(pos[:2] - self.goal_pos[:2])
-
-                    if (dist_to_start < self.scenario.config.MIN_CLEARANCE + radius or
-                        dist_to_goal < self.scenario.config.MIN_CLEARANCE + radius):
-                        continue
-
-                    obstacle = StaticObstacle(
-                        position=pos,
-                        radius=radius,
-                        height=self.scenario.config.ARENA_HEIGHT,
-                        physics_client=self.CLIENT
-                    )
-                    self.scenario.obstacles.append(obstacle)
-                    break
-        # Stage0 has no obstacles
+        self._disable_inter_drone_collisions()
 
         # Reset internal state
         self.control_step_counter = 0
-        self.prev_dist_to_goal = np.linalg.norm(self.goal_pos - self.start_pos)
-        self.prev_action = np.zeros(4)
-        self.prev_prev_action = np.zeros(4)  # Для smoothness penalty
-        self.visited_cells = set()  # Reset exploration tracking
+        if self.swarm_mode:
+            self.prev_dist_to_goal = np.linalg.norm(self.goal_pos_all - self.start_pos_all, axis=1)
+            self.prev_action = np.zeros((self.num_drones, 4))
+            self.prev_prev_action = np.zeros((self.num_drones, 4))
+            self.visited_cells = [set() for _ in range(self.num_drones)]
+            self.swarm_successes_total = 0
+            self.swarm_crashes_total = 0
+            self.swarm_respawns_total = 0
+        else:
+            self.prev_dist_to_goal = np.linalg.norm(self.goal_pos - self.start_pos)
+            self.prev_action = np.zeros(4)
+            self.prev_prev_action = np.zeros(4)  # Для smoothness penalty
+            self.visited_cells = set()  # Reset exploration tracking
 
         # Reset debug tracking
-        if config.DEBUG_MODE:
+        if config.DEBUG_MODE and not self.swarm_mode:
             self.episode_trajectory = [self.start_pos.copy()]
             self.episode_actions = []
             self.episode_heading_errors = []
@@ -587,6 +1140,18 @@ class NavAviary(BaseRLAviary):
                 self.episode_total_steps = 0  # Total steps for ratio calculation
                 self.episode_yaw_rates = []  # List of yaw rates
 
+        if self._watch_step_duration is not None:
+            self._last_watch_step_ts = None
+
+        if self.show_trajectory and self.GUI:
+            if self.swarm_mode:
+                self._trajectory_prev_pos = [self.start_pos_all[i].copy() for i in range(self.num_drones)]
+            else:
+                self._trajectory_prev_pos = self.start_pos.copy()
+            self._draw_watch_markers()
+        else:
+            self._trajectory_prev_pos = None
+
         # Recompute observation with correct start position
         obs = self._computeObs()
 
@@ -602,6 +1167,53 @@ class NavAviary(BaseRLAviary):
         Returns:
             observation, reward, terminated, truncated, info
         """
+        if self.swarm_mode:
+            action_arr = np.array(action, dtype=np.float32)
+            if action_arr.shape == (self.num_drones * 4,):
+                action_arr = action_arr.reshape(self.num_drones, 4)
+            if action_arr.shape != (self.num_drones, 4):
+                raise ValueError(f"Expected action shape ({self.num_drones}, 4), got {action_arr.shape}")
+
+            action_arr = np.clip(action_arr, -1.0, 1.0)
+            self.prev_prev_action = self.prev_action.copy()
+            self.prev_action = action_arr.copy()
+
+            dt = 1.0 / self.CTRL_FREQ
+            self.scenario.update_dynamic_obstacles(dt)
+
+            obs, reward, terminated, truncated, info = super().step(action_arr)
+            self._draw_trajectory_segment()
+            self.control_step_counter += 1
+
+            reward_terminal = 0.0
+            for i in range(self.num_drones):
+                is_success, is_crash = self._check_drone_terminal(i)
+                if is_success:
+                    self.swarm_successes_total += 1
+                    bonus = config.REWARD_SUCCESS
+                    if config.REWARD_EFFICIENCY_BONUS:
+                        efficiency = 1.0 - (self.control_step_counter / config.MAX_STEPS)
+                        bonus += config.REWARD_EFFICIENCY_SCALE * efficiency
+                    reward_terminal += bonus
+                    self.swarm_respawns_total += 1
+                    self._respawn_drone(i)
+                elif is_crash:
+                    self.swarm_crashes_total += 1
+                    reward_terminal += config.REWARD_CRASH
+                    self.swarm_respawns_total += 1
+                    self._respawn_drone(i)
+
+            reward = float(reward) + (reward_terminal / self.num_drones)
+            terminated = False
+            truncated = self.control_step_counter >= config.MAX_STEPS
+
+            if truncated:
+                reward += -200.0
+
+            info = self._computeInfo()
+            self._apply_watch_timing()
+            return obs, reward, terminated, truncated, info
+
         # Store action
         self.prev_prev_action = self.prev_action.copy()  # Сохраняем предыдущее действие
         self.prev_action = action.copy()
@@ -619,6 +1231,8 @@ class NavAviary(BaseRLAviary):
         obs, reward, terminated, truncated, info = super().step(
             np.array([action])
         )
+
+        self._draw_trajectory_segment()
 
         # Track trajectory for debug
         if config.DEBUG_MODE and config.LOG_NAVIGATION_METRICS:
@@ -661,5 +1275,7 @@ class NavAviary(BaseRLAviary):
             if 'reward_components' not in info:
                 info['reward_components'] = {}
             info['reward_components']['terminal'] = reward_terminal
+
+        self._apply_watch_timing()
 
         return obs, reward, terminated, truncated, info

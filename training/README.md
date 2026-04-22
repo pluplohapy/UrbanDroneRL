@@ -43,6 +43,12 @@ Optional:
   --timesteps N           Total training steps (default: 500k for Stage 0, 1.5M for Stage 1)
   --n-envs N              Number of parallel environments (default: 4)
   --continue              Continue training from checkpoint
+  --watch                 Enable continuous GUI watch mode (forces n-envs=1, fixed map, draws trajectory)
+  --watch-fps N           Watch mode FPS limit (default: 30)
+  --fixed-map             Keep same start/goal/obstacles across episodes
+  --show-paths            Draw drone trajectory in GUI
+  --no-show-paths         Disable trajectory drawing (faster GUI)
+  --swarm-drones N        Parallel drones in one shared map (e.g. 8)
 ```
 
 ## Examples
@@ -75,6 +81,21 @@ python training/train.py --stage 1 --n-envs 8
 
 # Continue interrupted training
 python training/train.py --stage 1 --continue
+
+# Watch training live in PyBullet GUI
+python training/train.py --stage 0 --watch
+
+# Watch mode with slower playback
+python training/train.py --stage 1 --watch --watch-fps 20
+
+# Fixed-map training without GUI (same map every episode)
+python training/train.py --stage 1 --fixed-map
+
+# 8 drones simultaneously in one map (best for your requested mode)
+python training/train.py --stage pretrain --obstacle-type cylinders --watch --swarm-drones 8
+
+# Faster GUI for swarm: no trajectory lines
+python training/train.py --stage pretrain --obstacle-type cylinders --watch --swarm-drones 8 --watch-fps 90 --no-show-paths
 ```
 
 ### Comparison Experiments

@@ -22,6 +22,9 @@ class NavAviaryWithPlanner(NavAviary):
         self,
         scenario,
         gui: bool = False,
+        watch_fps: float = None,
+        fixed_map: bool = False,
+        show_trajectory: bool = False,
         use_planner: bool = True,
         replan_freq: int = 0,
         waypoint_threshold: float = None,
@@ -33,6 +36,9 @@ class NavAviaryWithPlanner(NavAviary):
         Args:
             scenario: Scenario object providing obstacles and start/goal
             gui: Whether to show PyBullet GUI
+            watch_fps: Optional target FPS when GUI is enabled (for watch mode)
+            fixed_map: Keep same start/goal/obstacles across episodes
+            show_trajectory: Draw drone trajectory in GUI
             use_planner: Whether to use RRT* planner
             replan_freq: Replan every N steps (0 = no replanning)
             waypoint_threshold: Distance to consider waypoint reached (default: config.WAYPOINT_THRESHOLD)
@@ -64,7 +70,13 @@ class NavAviaryWithPlanner(NavAviary):
         self.planning_failed = False
 
         # Call parent constructor
-        super().__init__(scenario, gui)
+        super().__init__(
+            scenario=scenario,
+            gui=gui,
+            watch_fps=watch_fps,
+            fixed_map=fixed_map,
+            show_trajectory=show_trajectory
+        )
 
     def reset(self, seed=None, options=None):
         """
@@ -392,6 +404,8 @@ class NavAviaryWithPlanner(NavAviary):
             np.array([action])
         )
 
+        self._draw_trajectory_segment()
+
         # Check waypoint reached AFTER getting reward
         drone_pos = self._getDroneStateVector(0)[:3]
         if self.use_planner and len(self.waypoints) > 0:
@@ -478,6 +492,8 @@ class NavAviaryWithPlanner(NavAviary):
             # Path following score: % of time when CTE < threshold
             within_threshold = np.sum(np.array(self.cross_track_errors) < config.CROSS_TRACK_ERROR_THRESHOLD)
             info['path_following_score'] = within_threshold / len(self.cross_track_errors)
+
+        self._apply_watch_timing()
 
         return obs, reward, terminated, truncated, info
 
