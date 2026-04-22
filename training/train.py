@@ -14,9 +14,13 @@ Usage:
 import os
 import sys
 import argparse
+import json
+import heapq
 import numpy as np
 import torch
 import warnings
+from datetime import datetime
+from collections import Counter, deque
 from stable_baselines3 import PPO
 from stable_baselines3.common.vec_env import SubprocVecEnv, VecNormalize, DummyVecEnv
 from stable_baselines3.common.callbacks import BaseCallback
@@ -36,14 +40,457 @@ from scenarios.stage1_static import Stage1Scenario
 from config import load_config
 
 
+class TrainingDiagnosticsLogger:
+    """Compact structured diagnostics writer for training runs."""
+
+    def __init__(
+        self,
+        enabled: bool,
+        base_dir: str,
+        run_name: str,
+        stage: str,
+        use_planner: bool,
+        config,
+        sample_every: int = 10,
+        milestone_window: int = 100,
+        bad_top_k: int = 300,
+        extra_config: dict | None = None
+    ):
+        self.enabled = enabled
+        self.closed = False
+        self.run_dir = None
+        self._episodes_fh = None
+        self._milestones_fh = None
+
+        if not self.enabled:
+            return
+
+        self.config = config
+        self.sample_every = max(1, int(sample_every))
+        self.milestone_window = max(10, int(milestone_window))
+        self.bad_top_k = max(10, int(bad_top_k))
+        self.bad_heap = []  # Min-heap of (severity, episode_idx, record)
+        self.failure_reasons = Counter()
+        self.window = deque(maxlen=self.milestone_window)
+        self.milestones_written = 0
+        self.total_episodes = 0
+        self.outcome_counts = Counter()
+        self.global_metric_sums = {}
+        self.global_metric_counts = {}
+        self.outcome_metric_sums = {
+            "success": {},
+            "crash": {},
+            "timeout": {}
+        }
+        self.outcome_metric_counts = {
+            "success": {},
+            "crash": {},
+            "timeout": {}
+        }
+        self.reward_component_sums = {}
+        self.reward_component_counts = {}
+        self.reward_component_bad_sums = {}
+        self.reward_component_bad_counts = {}
+
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        safe_run_name = "".join(c if c.isalnum() or c in ("-", "_") else "_" for c in run_name)
+        self.run_dir = os.path.join(base_dir, f"{safe_run_name}_{timestamp}")
+        os.makedirs(self.run_dir, exist_ok=True)
+
+        self.episodes_path = os.path.join(self.run_dir, "episodes_compact.jsonl")
+        self.milestones_path = os.path.join(self.run_dir, "milestones.jsonl")
+        self.bad_path = os.path.join(self.run_dir, "bad_episodes_top.jsonl")
+        self.summary_path = os.path.join(self.run_dir, "summary_blocks.json")
+        self.readme_path = os.path.join(self.run_dir, "README.txt")
+        self.run_config_path = os.path.join(self.run_dir, "run_config.json")
+
+        self._episodes_fh = open(self.episodes_path, "w", encoding="utf-8")
+        self._milestones_fh = open(self.milestones_path, "w", encoding="utf-8")
+
+        run_config = {
+            "created_at": datetime.now().isoformat(),
+            "stage": stage,
+            "use_planner": bool(use_planner),
+            "pyb_freq": int(config.PYB_FREQ),
+            "ctrl_freq": int(config.CTRL_FREQ),
+            "max_steps": int(config.MAX_STEPS),
+            "success_dist": float(config.SUCCESS_DIST),
+            "min_clearance": float(config.MIN_CLEARANCE),
+            "timeout_near_goal_threshold": float(config.TIMEOUT_NEAR_GOAL_THRESHOLD),
+            "sample_every": int(self.sample_every),
+            "milestone_window": int(self.milestone_window),
+            "bad_top_k": int(self.bad_top_k),
+            "reward_scales": {
+                "progress": float(config.REWARD_PROGRESS_SCALE),
+                "velocity": float(config.REWARD_VELOCITY_SCALE),
+                "heading": float(config.REWARD_HEADING_SCALE),
+                "yaw_penalty": float(config.REWARD_YAW_PENALTY_SCALE),
+                "smoothness": float(config.REWARD_ACTION_SMOOTHNESS_SCALE),
+                "proximity": float(config.REWARD_PROXIMITY_SCALE),
+                "step_penalty": float(config.REWARD_STEP_PENALTY),
+                "success": float(config.REWARD_SUCCESS),
+                "crash": float(config.REWARD_CRASH)
+            }
+        }
+        if extra_config is not None:
+            run_config["run"] = extra_config
+
+        with open(self.run_config_path, "w", encoding="utf-8") as fh:
+            json.dump(run_config, fh, ensure_ascii=False, indent=2)
+
+        with open(self.readme_path, "w", encoding="utf-8") as fh:
+            fh.write(
+                "Training diagnostics files:\n"
+                "1) run_config.json - immutable run setup and reward scales\n"
+                "2) episodes_compact.jsonl - sampled successful episodes + all failures\n"
+                "3) milestones.jsonl - rolling-window snapshots for trend analysis\n"
+                "4) bad_episodes_top.jsonl - worst failure episodes ranked by severity\n"
+                "5) summary_blocks.json - final aggregated diagnostics grouped by blocks\n"
+            )
+
+    @staticmethod
+    def _safe_float(value):
+        try:
+            if value is None:
+                return None
+            value = float(value)
+            if np.isnan(value) or np.isinf(value):
+                return None
+            return value
+        except Exception:
+            return None
+
+    @staticmethod
+    def _to_float_list(value):
+        if value is None:
+            return None
+        try:
+            arr = np.asarray(value, dtype=float).reshape(-1)
+            return [float(x) for x in arr.tolist()]
+        except Exception:
+            return None
+
+    def _mean_from_maps(self, sums_map, counts_map, key):
+        count = counts_map.get(key, 0)
+        if count <= 0:
+            return None
+        return float(sums_map.get(key, 0.0) / count)
+
+    def _update_metric_map(self, sums_map, counts_map, key, value):
+        value = self._safe_float(value)
+        if value is None:
+            return
+        sums_map[key] = sums_map.get(key, 0.0) + value
+        counts_map[key] = counts_map.get(key, 0) + 1
+
+    def _infer_outcome(self, info):
+        if bool(info.get("is_success", False)):
+            return "success"
+        if bool(info.get("is_crash", False)):
+            return "crash"
+        return "timeout"
+
+    def _infer_failure_reason(self, record):
+        outcome = record["outcome"]
+        if outcome == "success":
+            return "success"
+
+        if outcome == "crash":
+            if bool(record.get("out_of_bounds", False)):
+                return "out_of_bounds"
+            if bool(record.get("has_contact", False)):
+                return "collision"
+            closest = record.get("closest_obstacle")
+            if closest is not None and closest < self.config.MIN_CLEARANCE:
+                return "low_clearance_crash"
+            return "crash_unknown"
+
+        # timeout
+        min_goal = record.get("min_goal_distance")
+        progress_ratio = record.get("progress_ratio")
+        avg_speed = record.get("avg_speed")
+        if min_goal is not None and min_goal <= self.config.TIMEOUT_NEAR_GOAL_THRESHOLD:
+            return "timeout_near_goal"
+        if progress_ratio is not None and progress_ratio < 0.2:
+            return "timeout_no_progress"
+        if avg_speed is not None and avg_speed < self.config.HOVERING_SPEED_THRESHOLD:
+            return "timeout_stuck_hovering"
+        return "timeout_other"
+
+    def _failure_severity(self, record):
+        outcome = record["outcome"]
+        reason = record["failure_reason"]
+        score = 0.0
+
+        if outcome == "crash":
+            score += 3.0
+        elif outcome == "timeout":
+            score += 2.0
+
+        if reason == "out_of_bounds":
+            score += 1.5
+        elif reason == "collision":
+            score += 1.0
+        elif reason == "timeout_near_goal":
+            score += 1.2
+        elif reason == "timeout_no_progress":
+            score += 0.8
+        elif reason == "timeout_stuck_hovering":
+            score += 1.0
+
+        dist_final = record.get("dist_to_goal")
+        start_dist = record.get("start_distance")
+        if dist_final is not None and start_dist is not None and start_dist > 1e-6:
+            score += min(2.0, max(0.0, dist_final / start_dist))
+
+        closest = record.get("closest_obstacle")
+        if closest is not None:
+            score += max(0.0, self.config.MIN_CLEARANCE - closest)
+
+        reward = record.get("episode_reward")
+        if reward is not None:
+            score += max(0.0, min(2.0, -reward / 1000.0))
+
+        return float(score)
+
+    def _record_milestone(self, episode_idx, timesteps):
+        if self.total_episodes % self.milestone_window != 0 or len(self.window) == 0:
+            return
+
+        outcomes = [x["outcome"] for x in self.window]
+        rewards = [x["episode_reward"] for x in self.window if x["episode_reward"] is not None]
+        final_dists = [x["dist_to_goal"] for x in self.window if x["dist_to_goal"] is not None]
+        progress = [x["progress_ratio"] for x in self.window if x["progress_ratio"] is not None]
+
+        snapshot = {
+            "episode": int(episode_idx),
+            "timesteps": int(timesteps),
+            "window_size": int(len(self.window)),
+            "rates": {
+                "success": float(np.mean([1.0 if o == "success" else 0.0 for o in outcomes])),
+                "crash": float(np.mean([1.0 if o == "crash" else 0.0 for o in outcomes])),
+                "timeout": float(np.mean([1.0 if o == "timeout" else 0.0 for o in outcomes]))
+            },
+            "means": {
+                "reward": float(np.mean(rewards)) if rewards else None,
+                "dist_to_goal": float(np.mean(final_dists)) if final_dists else None,
+                "progress_ratio": float(np.mean(progress)) if progress else None
+            }
+        }
+        self._milestones_fh.write(json.dumps(snapshot, ensure_ascii=False) + "\n")
+        self._milestones_fh.flush()
+        self.milestones_written += 1
+
+    def log_episode(self, episode_idx, timesteps, info):
+        if not self.enabled:
+            return
+
+        outcome = self._infer_outcome(info)
+        episode_reward = self._safe_float(info.get("episode", {}).get("r"))
+        episode_length = self._safe_float(info.get("episode", {}).get("l"))
+        dist_to_goal = self._safe_float(info.get("dist_to_goal"))
+        start_distance = self._safe_float(info.get("start_distance"))
+        min_goal_distance = self._safe_float(info.get("min_goal_distance"))
+        closest_obstacle = self._safe_float(info.get("closest_obstacle"))
+        min_ray_dist = self._safe_float(info.get("min_ray_dist"))
+        avg_speed = self._safe_float(info.get("avg_speed"))
+        avg_heading_error = self._safe_float(info.get("avg_heading_error"))
+        path_efficiency = self._safe_float(info.get("path_efficiency"))
+        action_smoothness = self._safe_float(info.get("action_smoothness"))
+        hovering_time = self._safe_float(info.get("hovering_time"))
+        spinning_time = self._safe_float(info.get("spinning_time"))
+        goal_seeking_ratio = self._safe_float(info.get("goal_seeking_ratio"))
+
+        progress_ratio = None
+        if start_distance is not None and start_distance > 1e-6 and dist_to_goal is not None:
+            progress_ratio = float((start_distance - dist_to_goal) / start_distance)
+
+        record = {
+            "episode": int(episode_idx),
+            "timesteps": int(timesteps),
+            "outcome": outcome,
+            "episode_reward": episode_reward,
+            "episode_length": episode_length,
+            "dist_to_goal": dist_to_goal,
+            "start_distance": start_distance,
+            "min_goal_distance": min_goal_distance,
+            "progress_ratio": progress_ratio,
+            "closest_obstacle": closest_obstacle,
+            "min_ray_dist": min_ray_dist,
+            "avg_speed": avg_speed,
+            "avg_heading_error": avg_heading_error,
+            "path_efficiency": path_efficiency,
+            "action_smoothness": action_smoothness,
+            "hovering_time": hovering_time,
+            "spinning_time": spinning_time,
+            "goal_seeking_ratio": goal_seeking_ratio,
+            "start_pos": self._to_float_list(info.get("start_pos")),
+            "goal_pos": self._to_float_list(info.get("goal_pos")),
+            "final_pos": self._to_float_list(info.get("final_pos")),
+            "out_of_bounds": bool(info.get("out_of_bounds", False)),
+            "has_contact": bool(info.get("has_contact", False)),
+        }
+
+        reward_components = info.get("reward_components")
+        if isinstance(reward_components, dict):
+            compact_components = {}
+            for k, v in reward_components.items():
+                fv = self._safe_float(v)
+                if fv is not None:
+                    compact_components[k] = fv
+                    self._update_metric_map(self.reward_component_sums, self.reward_component_counts, k, fv)
+            if compact_components:
+                record["reward_components"] = compact_components
+
+        record["failure_reason"] = self._infer_failure_reason(record)
+        self.failure_reasons[record["failure_reason"]] += 1
+
+        is_bad = outcome != "success"
+        if is_bad and "reward_components" in record:
+            for k, v in record["reward_components"].items():
+                self._update_metric_map(self.reward_component_bad_sums, self.reward_component_bad_counts, k, v)
+
+        # Global stats
+        self.total_episodes += 1
+        self.outcome_counts[outcome] += 1
+        for metric_key in [
+            "episode_reward",
+            "episode_length",
+            "dist_to_goal",
+            "min_goal_distance",
+            "progress_ratio",
+            "closest_obstacle",
+            "avg_speed",
+            "avg_heading_error",
+            "path_efficiency",
+            "action_smoothness",
+            "hovering_time",
+            "spinning_time",
+            "goal_seeking_ratio",
+        ]:
+            self._update_metric_map(self.global_metric_sums, self.global_metric_counts, metric_key, record.get(metric_key))
+            self._update_metric_map(
+                self.outcome_metric_sums[outcome],
+                self.outcome_metric_counts[outcome],
+                metric_key,
+                record.get(metric_key)
+            )
+
+        # Sampled compact stream: keep all failures + sampled successes
+        should_write = is_bad or (record["episode"] % self.sample_every == 0)
+        if should_write:
+            self._episodes_fh.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+        # Keep only top-K most severe failures
+        if is_bad:
+            severity = self._failure_severity(record)
+            rec_with_score = dict(record)
+            rec_with_score["severity"] = severity
+            item = (severity, int(record["episode"]), rec_with_score)
+            if len(self.bad_heap) < self.bad_top_k:
+                heapq.heappush(self.bad_heap, item)
+            else:
+                if severity > self.bad_heap[0][0]:
+                    heapq.heapreplace(self.bad_heap, item)
+
+        self.window.append(record)
+        self._record_milestone(record["episode"], record["timesteps"])
+
+        # Lightweight flush cadence
+        if self.total_episodes % 20 == 0:
+            self._episodes_fh.flush()
+
+    def close(self):
+        if (not self.enabled) or self.closed:
+            return
+        self.closed = True
+
+        if self._episodes_fh is not None:
+            self._episodes_fh.flush()
+            self._episodes_fh.close()
+        if self._milestones_fh is not None:
+            # Ensure there is at least one snapshot even for short runs.
+            if self.milestones_written == 0 and len(self.window) > 0:
+                outcomes = [x["outcome"] for x in self.window]
+                rewards = [x["episode_reward"] for x in self.window if x["episode_reward"] is not None]
+                final_dists = [x["dist_to_goal"] for x in self.window if x["dist_to_goal"] is not None]
+                progress = [x["progress_ratio"] for x in self.window if x["progress_ratio"] is not None]
+                last = self.window[-1]
+                snapshot = {
+                    "episode": int(last["episode"]),
+                    "timesteps": int(last["timesteps"]),
+                    "window_size": int(len(self.window)),
+                    "rates": {
+                        "success": float(np.mean([1.0 if o == "success" else 0.0 for o in outcomes])),
+                        "crash": float(np.mean([1.0 if o == "crash" else 0.0 for o in outcomes])),
+                        "timeout": float(np.mean([1.0 if o == "timeout" else 0.0 for o in outcomes]))
+                    },
+                    "means": {
+                        "reward": float(np.mean(rewards)) if rewards else None,
+                        "dist_to_goal": float(np.mean(final_dists)) if final_dists else None,
+                        "progress_ratio": float(np.mean(progress)) if progress else None
+                    },
+                    "final_window_snapshot": True
+                }
+                self._milestones_fh.write(json.dumps(snapshot, ensure_ascii=False) + "\n")
+                self._milestones_fh.flush()
+
+            self._milestones_fh.flush()
+            self._milestones_fh.close()
+
+        # Write ranked bad episodes
+        ranked_bad = sorted(self.bad_heap, key=lambda x: (x[0], x[1]), reverse=True)
+        with open(self.bad_path, "w", encoding="utf-8") as fh:
+            for _, _, record in ranked_bad:
+                fh.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+        def metric_means(sums_map, counts_map):
+            result = {}
+            for key in sorted(sums_map.keys()):
+                mean_val = self._mean_from_maps(sums_map, counts_map, key)
+                if mean_val is not None:
+                    result[key] = mean_val
+            return result
+
+        summary = {
+            "total_episodes": int(self.total_episodes),
+            "outcomes": {
+                "success": int(self.outcome_counts.get("success", 0)),
+                "crash": int(self.outcome_counts.get("crash", 0)),
+                "timeout": int(self.outcome_counts.get("timeout", 0)),
+                "success_rate": float(self.outcome_counts.get("success", 0) / max(1, self.total_episodes)),
+                "crash_rate": float(self.outcome_counts.get("crash", 0) / max(1, self.total_episodes)),
+                "timeout_rate": float(self.outcome_counts.get("timeout", 0) / max(1, self.total_episodes)),
+            },
+            "failure_reason_breakdown": dict(self.failure_reasons),
+            "global_means": metric_means(self.global_metric_sums, self.global_metric_counts),
+            "outcome_means": {
+                outcome: metric_means(self.outcome_metric_sums[outcome], self.outcome_metric_counts[outcome])
+                for outcome in ("success", "crash", "timeout")
+            },
+            "reward_component_means": metric_means(self.reward_component_sums, self.reward_component_counts),
+            "reward_component_means_bad_only": metric_means(self.reward_component_bad_sums, self.reward_component_bad_counts),
+            "bad_episode_top_k": int(len(ranked_bad)),
+            "files": {
+                "episodes_compact": self.episodes_path,
+                "milestones": self.milestones_path,
+                "bad_episodes_top": self.bad_path
+            }
+        }
+
+        with open(self.summary_path, "w", encoding="utf-8") as fh:
+            json.dump(summary, fh, ensure_ascii=False, indent=2)
+
+
 class ProgressCallback(BaseCallback):
     """Callback for displaying training progress."""
 
-    def __init__(self, stage, use_planner, config, verbose=0):
+    def __init__(self, stage, use_planner, config, diag_logger=None, verbose=0):
         super().__init__(verbose)
         self.stage = stage
         self.use_planner = use_planner
         self.config = config
+        self.diag_logger = diag_logger
         self.episode_count = 0
         self.episode_rewards = []
         self.episode_successes = []
@@ -94,6 +541,13 @@ class ProgressCallback(BaseCallback):
                     ep_length = info["episode"]["l"]
                     self.episode_rewards.append(ep_reward)
                     self.episode_lengths.append(ep_length)
+
+                    if self.diag_logger is not None:
+                        self.diag_logger.log_episode(
+                            episode_idx=self.episode_count,
+                            timesteps=self.num_timesteps,
+                            info=info
+                        )
 
                     # Track success/crash/timeout
                     if "is_success" in info:
@@ -183,6 +637,10 @@ class ProgressCallback(BaseCallback):
                         self._print_progress()
 
         return True
+
+    def _on_training_end(self) -> None:
+        if self.diag_logger is not None:
+            self.diag_logger.close()
 
     def _print_progress(self):
         """Print training progress."""
@@ -419,6 +877,19 @@ def main():
                         help='Disable trajectory drawing even in watch mode')
     parser.add_argument('--swarm-drones', type=int, default=1,
                         help='Number of drones in one shared map (parallel in one env)')
+    parser.add_argument('--diag', dest='diag', action='store_true',
+                        help='Enable structured diagnostics logs (default: enabled)')
+    parser.add_argument('--no-diag', dest='diag', action='store_false',
+                        help='Disable structured diagnostics logs')
+    parser.add_argument('--diag-dir', type=str, default='logs/training_diagnostics',
+                        help='Directory for structured diagnostics logs')
+    parser.add_argument('--diag-sample-every', type=int, default=10,
+                        help='Write every Nth successful episode to compact diagnostics stream')
+    parser.add_argument('--diag-window', type=int, default=100,
+                        help='Rolling window size for milestone snapshots')
+    parser.add_argument('--diag-bad-topk', type=int, default=300,
+                        help='Keep top-K worst failure episodes in diagnostics')
+    parser.set_defaults(diag=True)
 
     args = parser.parse_args()
 
@@ -448,6 +919,12 @@ def main():
 
     if swarm_drones < 1:
         parser.error("--swarm-drones must be >= 1")
+    if args.diag_sample_every < 1:
+        parser.error("--diag-sample-every must be >= 1")
+    if args.diag_window < 10:
+        parser.error("--diag-window must be >= 10")
+    if args.diag_bad_topk < 10:
+        parser.error("--diag-bad-topk must be >= 10")
 
     if swarm_drones > 1:
         if use_planner:
@@ -533,6 +1010,7 @@ def main():
     print(f"  Fixed map: {fixed_map}")
     print(f"  Show paths: {show_paths}")
     print(f"  Swarm drones: {swarm_drones}")
+    print(f"  Diagnostics logs: {args.diag}")
     if watch_mode:
         print(f"  Watch FPS: {args.watch_fps}")
     print(f"  Arena: {config.ARENA_SIZE_X}x{config.ARENA_SIZE_Y}x{config.ARENA_HEIGHT}m")
@@ -643,7 +1121,34 @@ def main():
         print("✓ Model created")
 
     # Create callback
-    progress_callback = ProgressCallback(stage=stage, use_planner=use_planner, config=config)
+    diag_logger = TrainingDiagnosticsLogger(
+        enabled=args.diag,
+        base_dir=args.diag_dir,
+        run_name=log_name,
+        stage=stage,
+        use_planner=use_planner,
+        config=config,
+        sample_every=args.diag_sample_every,
+        milestone_window=args.diag_window,
+        bad_top_k=args.diag_bad_topk,
+        extra_config={
+            "watch_mode": watch_mode,
+            "n_envs": int(n_envs),
+            "swarm_drones": int(swarm_drones),
+            "obstacle_type": args.obstacle_type if stage == "pretrain" else None,
+            "continue_training": bool(args.continue_training),
+            "timesteps_target": int(timesteps)
+        }
+    )
+    if args.diag and diag_logger.run_dir is not None:
+        print(f"[DIAG] Run dir: {diag_logger.run_dir}")
+
+    progress_callback = ProgressCallback(
+        stage=stage,
+        use_planner=use_planner,
+        config=config,
+        diag_logger=diag_logger
+    )
 
     print(f"\n[TRAINING] Starting training...")
     print("-" * 60)
@@ -669,12 +1174,17 @@ def main():
     print(f"✓ Model saved to {model_path}.zip")
     print(f"✓ Normalization saved to {normalize_path}")
 
+    if diag_logger is not None:
+        diag_logger.close()
+
     vec_env.close()
 
     print("\n" + "=" * 60)
     print("TRAINING FINISHED")
     print("=" * 60)
     print(f"\nTotal training steps: {model.num_timesteps:,}")
+    if args.diag and diag_logger.run_dir is not None:
+        print(f"[DIAGNOSTICS] Structured logs saved to: {diag_logger.run_dir}")
 
     # Next steps
     print("\n[NEXT STEPS]")

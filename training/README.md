@@ -49,6 +49,11 @@ Optional:
   --show-paths            Draw drone trajectory in GUI
   --no-show-paths         Disable trajectory drawing (faster GUI)
   --swarm-drones N        Parallel drones in one shared map (e.g. 8)
+  --diag / --no-diag      Enable/disable structured diagnostics logs (default: enabled)
+  --diag-dir PATH         Diagnostics output directory (default: logs/training_diagnostics)
+  --diag-sample-every N   Keep every Nth successful episode in compact logs
+  --diag-window N         Rolling window size for milestone snapshots
+  --diag-bad-topk N       Keep top-K most severe bad episodes
 ```
 
 ## Examples
@@ -96,7 +101,21 @@ python training/train.py --stage pretrain --obstacle-type cylinders --watch --sw
 
 # Faster GUI for swarm: no trajectory lines
 python training/train.py --stage pretrain --obstacle-type cylinders --watch --swarm-drones 8 --watch-fps 90 --no-show-paths
+
+# Fast normal training + compact diagnostics for failure analysis
+python training/train.py --stage pretrain --obstacle-type cylinders --n-envs 8 --diag --diag-sample-every 10 --diag-bad-topk 300
 ```
+
+### Structured Diagnostics Logs
+When diagnostics are enabled, each run writes a separate folder:
+`logs/training_diagnostics/<run_name>_<timestamp>/`
+
+Files:
+- `run_config.json` - immutable run setup (including reward scales)
+- `episodes_compact.jsonl` - sampled successes + all failures
+- `milestones.jsonl` - rolling-window trend snapshots
+- `bad_episodes_top.jsonl` - highest-severity failure episodes (with coordinates and distances)
+- `summary_blocks.json` - final grouped summary for quick tuning
 
 ### Comparison Experiments
 ```bash

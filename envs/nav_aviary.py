@@ -1063,7 +1063,12 @@ class NavAviary(BaseRLAviary):
             "is_crash": is_crash,
             "dist_to_goal": dist_to_goal,
             "min_ray_dist": min_ray_dist,
-            "step": self.control_step_counter
+            "step": self.control_step_counter,
+            "has_contact": bool(len(contact_points) > 0),
+            "out_of_bounds": bool(out_of_bounds),
+            "start_pos": self.start_pos.tolist() if self.start_pos is not None else None,
+            "goal_pos": self.goal_pos.tolist() if self.goal_pos is not None else None,
+            "final_pos": drone_pos.tolist()
         }
 
         # Add debug metrics if enabled
