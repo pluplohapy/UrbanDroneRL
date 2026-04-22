@@ -5,7 +5,6 @@ Shows the planned path and drone following it.
 
 import numpy as np
 import argparse
-import time
 import pybullet as p
 from stable_baselines3 import PPO
 from stable_baselines3.common.vec_env import VecNormalize, DummyVecEnv
@@ -97,8 +96,6 @@ def visualize_episode(env, model, render=True, save_video=False):
         visualize_rrt_tree_3d(planner, waypoints, start, goal, obstacles)
 
     trajectory = [start.copy()]
-    prev_pos = start.copy()
-
     print(f"\n[Episode] Running...")
     while not done:
         action, _ = model.predict(obs, deterministic=True)
@@ -117,19 +114,6 @@ def visualize_episode(env, model, render=True, save_video=False):
         speed = np.linalg.norm(drone_vel)
         dist_to_goal = np.linalg.norm(goal - drone_pos)
         yaw_rate = abs(action[0][3]) * config.YAW_RATE_MAX if len(action[0]) > 3 else 0
-
-        # Draw actual trajectory (thick red line)
-        p.addUserDebugLine(
-            prev_pos,
-            drone_pos,
-            lineColorRGB=[1, 0, 0],
-            lineWidth=5,
-            physicsClientId=client
-        )
-        prev_pos = drone_pos.copy()
-
-        if render:
-            time.sleep(1.0 / 30.0)  # 30 FPS
 
         # Print detailed progress every 50 steps
         if 'current_waypoint_idx' in info[0]:
@@ -192,12 +176,22 @@ def main():
                         help='Disable PyBullet GUI')
     parser.add_argument('--no-planner', action='store_true',
                         help='Disable RRT* planner (direct to goal)')
+    parser.add_argument('--watch-fps', type=float, default=60.0,
+                        help='Target GUI FPS (same as train --watch-fps)')
+    parser.add_argument('--show-paths', action='store_true',
+                        help='Draw trajectory lines in GUI')
+    parser.add_argument('--no-show-paths', action='store_true',
+                        help='Disable trajectory lines in GUI')
 
     args = parser.parse_args()
 
     print("=" * 60)
     print("DRONE NAVIGATION VISUALIZATION WITH RRT*")
     print("=" * 60)
+    if args.watch_fps <= 0:
+        raise ValueError("--watch-fps must be > 0")
+    show_paths = args.show_paths or (not args.no_show_paths)
+    print(f"[CONFIG] watch_fps={args.watch_fps}, show_paths={show_paths}")
 
     # Auto-detect normalize path if not specified
     if args.normalize is None:
@@ -230,6 +224,8 @@ def main():
         env = NavAviaryWithPlanner(
             scenario=scenario,
             gui=not args.no_gui,
+            watch_fps=args.watch_fps,
+            show_trajectory=show_paths,
             use_planner=not args.no_planner,
             replan_freq=0,
             waypoint_threshold=config.WAYPOINT_THRESHOLD,  # 0.3м

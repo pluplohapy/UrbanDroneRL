@@ -5,7 +5,7 @@ Implements 20-ray configuration: 8 horizontal + 4 at +30° + 4 at -30° + 1 up +
 
 import numpy as np
 import pybullet as p
-from typing import List, Tuple
+from typing import Iterable, Optional
 
 
 class RaycastSensor:
@@ -75,8 +75,13 @@ class RaycastSensor:
 
         return np.array(directions)
 
-    def cast_rays(self, drone_pos: np.ndarray, drone_orn: np.ndarray,
-                  physics_client: int) -> np.ndarray:
+    def cast_rays(
+        self,
+        drone_pos: np.ndarray,
+        drone_orn: np.ndarray,
+        physics_client: int,
+        ignore_body_ids: Optional[Iterable[int]] = None
+    ) -> np.ndarray:
         """
         Cast rays from drone position and return normalized distances.
 
@@ -84,11 +89,14 @@ class RaycastSensor:
             drone_pos: Drone position [x, y, z]
             drone_orn: Drone orientation quaternion [x, y, z, w]
             physics_client: PyBullet physics client ID
+            ignore_body_ids: Optional body ids to ignore (e.g. other drones)
 
         Returns:
-            Array of shape (16,) with normalized distances [0, 1]
+            Array of shape (20,) with normalized distances [0, 1]
             where 0 = max distance (no hit), 1 = very close
         """
+        ignored = {int(body_id) for body_id in ignore_body_ids} if ignore_body_ids is not None else set()
+
         # Convert quaternion to rotation matrix
         rot_matrix = np.array(p.getMatrixFromQuaternion(drone_orn)).reshape(3, 3)
 
@@ -98,17 +106,38 @@ class RaycastSensor:
         # Cast all rays
         ray_results = []
         for direction in world_directions:
-            ray_from = drone_pos
-            ray_to = drone_pos + direction * self.ray_length
+            # If ignored bodies are hit (e.g. other drones), continue the ray further.
+            # This keeps obstacle sensing independent from peer drones in swarm mode.
+            ray_from = np.array(drone_pos, dtype=float)
+            remaining = float(self.ray_length)
+            traveled = 0.0
+            distance = self.ray_length
 
-            result = p.rayTest(ray_from, ray_to, physicsClientId=physics_client)
+            for _ in range(8):
+                ray_to = ray_from + direction * remaining
+                result = p.rayTest(ray_from, ray_to, physicsClientId=physics_client)[0]
+                hit_body_id = int(result[0])
+                hit_fraction = float(result[2])
 
-            # result is a list with one tuple: (objectUniqueId, linkIndex, hit_fraction, hit_position, hit_normal)
-            hit_fraction = result[0][2]
+                if hit_body_id < 0:
+                    distance = self.ray_length
+                    break
 
-            # hit_fraction is in [0, 1] where 1 = no hit
-            # Convert to distance
-            distance = hit_fraction * self.ray_length
+                hit_distance = max(0.0, hit_fraction) * remaining
+                abs_hit_distance = min(self.ray_length, traveled + hit_distance)
+
+                if hit_body_id not in ignored:
+                    distance = abs_hit_distance
+                    break
+
+                advance = min(remaining, hit_distance + 1e-3)
+                traveled += advance
+                remaining -= advance
+                if remaining <= 1e-6:
+                    distance = self.ray_length
+                    break
+                ray_from = np.array(drone_pos, dtype=float) + direction * traveled
+
             ray_results.append(distance)
 
         # Normalize distances to [0, 1] where 1 = far (safe), 0 = close (danger)

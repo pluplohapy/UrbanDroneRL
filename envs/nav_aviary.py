@@ -69,6 +69,7 @@ class NavAviary(BaseRLAviary):
         self.swarm_successes_total = 0
         self.swarm_crashes_total = 0
         self.swarm_respawns_total = 0
+        self._drone_body_ids = set()
         self._trajectory_draw_every = 6 if self.swarm_mode else 1
         self._trajectory_line_life = 3.0 if self.swarm_mode else 0.0
         self._trajectory_line_width = 1 if self.swarm_mode else 3
@@ -181,20 +182,57 @@ class NavAviary(BaseRLAviary):
         goals[:, 2] = np.clip(goals[:, 2], 0.5, self.arena_height - 0.2)
         return starts, goals
 
+    def _refresh_drone_body_ids(self):
+        """Cache current drone body ids after each reset."""
+        drone_ids = np.array(self.DRONE_IDS).reshape(-1)
+        self._drone_body_ids = {int(body_id) for body_id in drone_ids}
+
+    def _get_ray_ignore_ids(self):
+        """Bodies ignored by ray sensor to decouple swarm drones from each other."""
+        if self.swarm_mode:
+            if not self._drone_body_ids and hasattr(self, "DRONE_IDS"):
+                self._refresh_drone_body_ids()
+            return self._drone_body_ids
+        return None
+
+    def _has_non_peer_contact(self, drone_id, contact_points):
+        """True if drone touched obstacle/world (peer drone contacts are ignored)."""
+        if not contact_points:
+            return False
+
+        if not self.swarm_mode:
+            return True
+
+        drone_body_id = int(self.DRONE_IDS[drone_id])
+        for contact in contact_points:
+            body_a = int(contact[1])
+            body_b = int(contact[2])
+            other_body = body_b if body_a == drone_body_id else body_a
+            if other_body not in self._drone_body_ids:
+                return True
+        return False
+
     def _disable_inter_drone_collisions(self):
         """Disable drone-drone collisions for stable parallel rollout."""
         if not self.swarm_mode:
             return
+        self._refresh_drone_body_ids()
         for i in range(self.num_drones):
+            body_a = int(self.DRONE_IDS[i])
+            links_a = [-1] + list(range(p.getNumJoints(body_a, physicsClientId=self.CLIENT)))
             for j in range(i + 1, self.num_drones):
-                p.setCollisionFilterPair(
-                    bodyUniqueIdA=int(self.DRONE_IDS[i]),
-                    bodyUniqueIdB=int(self.DRONE_IDS[j]),
-                    linkIndexA=-1,
-                    linkIndexB=-1,
-                    enableCollision=0,
-                    physicsClientId=self.CLIENT
-                )
+                body_b = int(self.DRONE_IDS[j])
+                links_b = [-1] + list(range(p.getNumJoints(body_b, physicsClientId=self.CLIENT)))
+                for link_a in links_a:
+                    for link_b in links_b:
+                        p.setCollisionFilterPair(
+                            bodyUniqueIdA=body_a,
+                            bodyUniqueIdB=body_b,
+                            linkIndexA=link_a,
+                            linkIndexB=link_b,
+                            enableCollision=0,
+                            physicsClientId=self.CLIENT
+                        )
 
     def _check_drone_terminal(self, drone_id):
         """Return terminal flags for one drone in swarm mode."""
@@ -204,13 +242,14 @@ class NavAviary(BaseRLAviary):
         is_success = dist_to_goal < config.SUCCESS_DIST
 
         contact_points = p.getContactPoints(bodyA=self.DRONE_IDS[drone_id], physicsClientId=self.CLIENT) or []
+        has_relevant_contact = self._has_non_peer_contact(drone_id, contact_points)
         out_of_bounds = (
             abs(drone_pos[0]) > self.arena_size_x / 2 or
             abs(drone_pos[1]) > self.arena_size_y / 2 or
             drone_pos[2] < 0.1 or
             drone_pos[2] > self.arena_height
         )
-        is_crash = (len(contact_points) > 0) or out_of_bounds
+        is_crash = has_relevant_contact or out_of_bounds
         return is_success, is_crash
 
     def _respawn_drone(self, drone_id):
@@ -650,7 +689,12 @@ class NavAviary(BaseRLAviary):
                 yaw = np.arctan2(2.0 * (qw * qz + qx * qy), 1.0 - 2.0 * (qy ** 2 + qz ** 2))
                 yaw_norm = yaw / np.pi
                 prev_action = self.prev_action[i]
-                raycasts = self.raycast_sensor.cast_rays(drone_pos, drone_quat, self.CLIENT)
+                raycasts = self.raycast_sensor.cast_rays(
+                    drone_pos,
+                    drone_quat,
+                    self.CLIENT,
+                    ignore_body_ids=self._get_ray_ignore_ids()
+                )
 
                 obs_all[i] = np.concatenate([
                     goal_body_norm,
@@ -680,7 +724,12 @@ class NavAviary(BaseRLAviary):
         yaw = np.arctan2(2.0 * (qw * qz + qx * qy), 1.0 - 2.0 * (qy**2 + qz**2))
         yaw_norm = yaw / np.pi
         prev_action = self.prev_action
-        raycasts = self.raycast_sensor.cast_rays(drone_pos, drone_quat, self.CLIENT)
+        raycasts = self.raycast_sensor.cast_rays(
+            drone_pos,
+            drone_quat,
+            self.CLIENT,
+            ignore_body_ids=self._get_ray_ignore_ids()
+        )
 
         obs = np.concatenate([
             goal_body_norm,
@@ -756,7 +805,12 @@ class NavAviary(BaseRLAviary):
                     self.visited_cells[i].add(grid_key)
                     reward_i += config.REWARD_EXPLORATION_BONUS
 
-                raycasts = self.raycast_sensor.cast_rays(drone_pos, drone_quat, self.CLIENT)
+                raycasts = self.raycast_sensor.cast_rays(
+                    drone_pos,
+                    drone_quat,
+                    self.CLIENT,
+                    ignore_body_ids=self._get_ray_ignore_ids()
+                )
                 min_dist = np.min(raycasts) * config.RAY_LENGTH
                 if min_dist < config.REWARD_PROXIMITY_THRESHOLD:
                     reward_i += -config.REWARD_PROXIMITY_SCALE * np.exp(-min_dist)
@@ -831,7 +885,12 @@ class NavAviary(BaseRLAviary):
             self._log_reward_component('exploration', 0.0)
 
         # Proximity penalty based on raycasts - умеренный экспоненциальный штраф
-        raycasts = self.raycast_sensor.cast_rays(drone_pos, drone_quat, self.CLIENT)
+        raycasts = self.raycast_sensor.cast_rays(
+            drone_pos,
+            drone_quat,
+            self.CLIENT,
+            ignore_body_ids=self._get_ray_ignore_ids()
+        )
         min_ray = np.min(raycasts)
 
         # Convert normalized ray to actual distance
@@ -910,7 +969,7 @@ class NavAviary(BaseRLAviary):
             return True
 
         # Crash: collision detected
-        contact_points = p.getContactPoints(bodyA=self.DRONE_IDS[0], physicsClientId=self.CLIENT)
+        contact_points = p.getContactPoints(bodyA=self.DRONE_IDS[0], physicsClientId=self.CLIENT) or []
         if len(contact_points) > 0:
             return True
 
@@ -951,7 +1010,12 @@ class NavAviary(BaseRLAviary):
                 drone_pos = state[:3]
                 drone_quat = state[3:7]
                 dists.append(np.linalg.norm(self.goal_pos_all[i] - drone_pos))
-                rays = self.raycast_sensor.cast_rays(drone_pos, drone_quat, self.CLIENT)
+                rays = self.raycast_sensor.cast_rays(
+                    drone_pos,
+                    drone_quat,
+                    self.CLIENT,
+                    ignore_body_ids=self._get_ray_ignore_ids()
+                )
                 min_rays.append(np.min(rays) * config.RAY_LENGTH)
 
             return {
@@ -973,7 +1037,7 @@ class NavAviary(BaseRLAviary):
 
         # Check success and crash
         is_success = dist_to_goal < config.SUCCESS_DIST
-        contact_points = p.getContactPoints(bodyA=self.DRONE_IDS[0], physicsClientId=self.CLIENT)
+        contact_points = p.getContactPoints(bodyA=self.DRONE_IDS[0], physicsClientId=self.CLIENT) or []
 
         # Check if out of bounds (also counts as crash)
         out_of_bounds = (
@@ -986,7 +1050,12 @@ class NavAviary(BaseRLAviary):
         is_crash = len(contact_points) > 0 or out_of_bounds
 
         # Get min ray distance
-        raycasts = self.raycast_sensor.cast_rays(drone_pos, drone_quat, self.CLIENT)
+        raycasts = self.raycast_sensor.cast_rays(
+            drone_pos,
+            drone_quat,
+            self.CLIENT,
+            ignore_body_ids=self._get_ray_ignore_ids()
+        )
         min_ray_dist = np.min(raycasts) * config.RAY_LENGTH
 
         info = {
@@ -1092,6 +1161,7 @@ class NavAviary(BaseRLAviary):
         # Call parent reset (this calls p.resetSimulation() and spawns drone at INIT_XYZS)
         obs, info = super().reset(seed=seed, options=options)
         self._optimize_gui_rendering()
+        self._refresh_drone_body_ids()
 
         # Create or restore obstacles AFTER resetSimulation
         if self.fixed_map and self._fixed_map_initialized:

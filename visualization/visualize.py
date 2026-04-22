@@ -22,7 +22,9 @@ def visualize_flight(model_path="models/ppo_drone_nav_test",
                      n_episodes=5,
                      deterministic=True,
                      stage=0,
-                     obstacle_type='random'):
+                     obstacle_type='random',
+                     watch_fps=60.0,
+                     show_paths=True):
     """
     Visualize trained model flying in PyBullet GUI.
 
@@ -33,10 +35,15 @@ def visualize_flight(model_path="models/ppo_drone_nav_test",
         deterministic: Use deterministic policy
         stage: 0 for empty, 1 for static obstacles, 'pretrain' for pretrain
         obstacle_type: Obstacle type for pretrain stage
+        watch_fps: Target visualization FPS (same mechanism as train --watch)
+        show_paths: Draw trajectory using env built-in renderer
     """
     print("=" * 60)
     print("DRONE NAVIGATION VISUALIZATION")
     print("=" * 60)
+    print(f"[CONFIG] watch_fps={watch_fps}, show_paths={show_paths}")
+    if watch_fps <= 0:
+        raise ValueError("watch_fps must be > 0")
 
     # Create environment with GUI FIRST
     print("\n[SETUP] Creating visualization environment...")
@@ -51,14 +58,15 @@ def visualize_flight(model_path="models/ppo_drone_nav_test",
         else:
             scenario = Stage0Scenario(seed=42)
             print("✓ Using Stage 0 (empty)")
-        env = NavAviary(scenario=scenario, gui=True)  # GUI enabled
+        env = NavAviary(
+            scenario=scenario,
+            gui=True,
+            watch_fps=watch_fps,
+            show_trajectory=show_paths
+        )
         return env
 
     env = DummyVecEnv([make_env])
-
-    # Disable PyBullet warnings
-    p.configureDebugVisualizer(p.COV_ENABLE_GUI, 1, physicsClientId=env.envs[0].CLIENT)
-    p.configureDebugVisualizer(p.COV_ENABLE_RENDERING, 1, physicsClientId=env.envs[0].CLIENT)
 
     # Load normalization stats
     try:
@@ -119,8 +127,6 @@ def visualize_flight(model_path="models/ppo_drone_nav_test",
 
         # Track trajectory
         trajectory = []
-        prev_pos = None
-
         # Debug tracking
         actions_log = []
         velocities_log = []
@@ -159,18 +165,6 @@ def visualize_flight(model_path="models/ppo_drone_nav_test",
                 print(f"           | Action: [{action[0][0]:5.2f}, {action[0][1]:5.2f}, {action[0][2]:5.2f}, {action[0][3]:5.2f}] | "
                       f"Vel: [{curr_vel[0]:5.2f}, {curr_vel[1]:5.2f}, {curr_vel[2]:5.2f}]")
 
-            # Draw trajectory line
-            if prev_pos is not None:
-                p.addUserDebugLine(
-                    prev_pos,
-                    curr_pos,
-                    [1, 0, 0],  # Red color
-                    5,
-                    0,
-                    physicsClientId=env.envs[0].CLIENT
-                )
-            prev_pos = curr_pos
-
             # Step environment
             step_result = env.step(action)
 
@@ -186,9 +180,6 @@ def visualize_flight(model_path="models/ppo_drone_nav_test",
 
             episode_reward += reward[0]
             step += 1
-
-            # Slow down for visualization
-            time.sleep(0.03)  # ~30 FPS
 
             if done[0]:
                 # Get position AFTER step (where crash actually happened)
@@ -302,8 +293,15 @@ if __name__ == "__main__":
                         help="Stage: 0=empty, 1=static obstacles, pretrain=pretrain")
     parser.add_argument("--obstacle-type", type=str, default="random",
                         help="Obstacle type for pretrain stage")
+    parser.add_argument("--watch-fps", type=float, default=60.0,
+                        help="Target GUI FPS (same as train --watch-fps)")
+    parser.add_argument("--show-paths", action="store_true",
+                        help="Draw trajectory lines in GUI")
+    parser.add_argument("--no-show-paths", action="store_true",
+                        help="Disable trajectory lines in GUI")
 
     args = parser.parse_args()
+    show_paths = args.show_paths or (not args.no_show_paths)
 
     # Convert stage to appropriate type
     if args.stage == 'pretrain':
@@ -317,5 +315,7 @@ if __name__ == "__main__":
         n_episodes=args.episodes,
         deterministic=not args.stochastic,
         stage=stage,
-        obstacle_type=args.obstacle_type
+        obstacle_type=args.obstacle_type,
+        watch_fps=args.watch_fps,
+        show_paths=show_paths
     )
