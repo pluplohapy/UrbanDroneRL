@@ -91,6 +91,12 @@ class TrainingDiagnosticsLogger:
         self.reward_component_counts = {}
         self.reward_component_bad_sums = {}
         self.reward_component_bad_counts = {}
+        self.crash_with_reward_count = 0
+        self.crash_positive_count = 0
+        self.out_of_bounds_crash_with_reward_count = 0
+        self.out_of_bounds_crash_positive_count = 0
+        self.contact_crash_with_reward_count = 0
+        self.contact_crash_positive_count = 0
 
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         safe_run_name = "".join(c if c.isalnum() or c in ("-", "_") else "_" for c in run_name)
@@ -127,9 +133,13 @@ class TrainingDiagnosticsLogger:
                 "yaw_penalty": float(config.REWARD_YAW_PENALTY_SCALE),
                 "smoothness": float(config.REWARD_ACTION_SMOOTHNESS_SCALE),
                 "proximity": float(config.REWARD_PROXIMITY_SCALE),
+                "boundary_threshold": float(config.REWARD_BOUNDARY_THRESHOLD),
+                "boundary_scale": float(config.REWARD_BOUNDARY_SCALE),
                 "step_penalty": float(config.REWARD_STEP_PENALTY),
                 "success": float(config.REWARD_SUCCESS),
-                "crash": float(config.REWARD_CRASH)
+                "crash": float(config.REWARD_CRASH),
+                "out_of_bounds_extra": float(config.REWARD_OUT_OF_BOUNDS_EXTRA),
+                "collision_extra": float(config.REWARD_COLLISION_EXTRA)
             }
         }
         if extra_config is not None:
@@ -261,6 +271,11 @@ class TrainingDiagnosticsLogger:
         rewards = [x["episode_reward"] for x in self.window if x["episode_reward"] is not None]
         final_dists = [x["dist_to_goal"] for x in self.window if x["dist_to_goal"] is not None]
         progress = [x["progress_ratio"] for x in self.window if x["progress_ratio"] is not None]
+        crash_rewards = [
+            x["episode_reward"]
+            for x in self.window
+            if x["outcome"] == "crash" and x["episode_reward"] is not None
+        ]
 
         snapshot = {
             "episode": int(episode_idx),
@@ -275,6 +290,9 @@ class TrainingDiagnosticsLogger:
                 "reward": float(np.mean(rewards)) if rewards else None,
                 "dist_to_goal": float(np.mean(final_dists)) if final_dists else None,
                 "progress_ratio": float(np.mean(progress)) if progress else None
+            },
+            "alignment": {
+                "positive_crash_rate": float(np.mean([1.0 if r > 0.0 else 0.0 for r in crash_rewards])) if crash_rewards else None
             }
         }
         self._milestones_fh.write(json.dumps(snapshot, ensure_ascii=False) + "\n")
@@ -293,6 +311,7 @@ class TrainingDiagnosticsLogger:
         min_goal_distance = self._safe_float(info.get("min_goal_distance"))
         closest_obstacle = self._safe_float(info.get("closest_obstacle"))
         min_ray_dist = self._safe_float(info.get("min_ray_dist"))
+        boundary_dist = self._safe_float(info.get("boundary_dist"))
         avg_speed = self._safe_float(info.get("avg_speed"))
         avg_heading_error = self._safe_float(info.get("avg_heading_error"))
         path_efficiency = self._safe_float(info.get("path_efficiency"))
@@ -317,6 +336,7 @@ class TrainingDiagnosticsLogger:
             "progress_ratio": progress_ratio,
             "closest_obstacle": closest_obstacle,
             "min_ray_dist": min_ray_dist,
+            "boundary_dist": boundary_dist,
             "avg_speed": avg_speed,
             "avg_heading_error": avg_heading_error,
             "path_efficiency": path_efficiency,
@@ -345,6 +365,21 @@ class TrainingDiagnosticsLogger:
         record["failure_reason"] = self._infer_failure_reason(record)
         self.failure_reasons[record["failure_reason"]] += 1
 
+        if outcome == "crash" and episode_reward is not None:
+            self.crash_with_reward_count += 1
+            if episode_reward > 0.0:
+                self.crash_positive_count += 1
+
+            if record.get("out_of_bounds", False):
+                self.out_of_bounds_crash_with_reward_count += 1
+                if episode_reward > 0.0:
+                    self.out_of_bounds_crash_positive_count += 1
+
+            if record.get("has_contact", False):
+                self.contact_crash_with_reward_count += 1
+                if episode_reward > 0.0:
+                    self.contact_crash_positive_count += 1
+
         is_bad = outcome != "success"
         if is_bad and "reward_components" in record:
             for k, v in record["reward_components"].items():
@@ -360,6 +395,7 @@ class TrainingDiagnosticsLogger:
             "min_goal_distance",
             "progress_ratio",
             "closest_obstacle",
+            "boundary_dist",
             "avg_speed",
             "avg_heading_error",
             "path_efficiency",
@@ -430,6 +466,13 @@ class TrainingDiagnosticsLogger:
                         "dist_to_goal": float(np.mean(final_dists)) if final_dists else None,
                         "progress_ratio": float(np.mean(progress)) if progress else None
                     },
+                    "alignment": {
+                        "positive_crash_rate": float(np.mean([
+                            1.0 if x["episode_reward"] > 0.0 else 0.0
+                            for x in self.window
+                            if x["outcome"] == "crash" and x["episode_reward"] is not None
+                        ])) if any(x["outcome"] == "crash" and x["episode_reward"] is not None for x in self.window) else None
+                    },
                     "final_window_snapshot": True
                 }
                 self._milestones_fh.write(json.dumps(snapshot, ensure_ascii=False) + "\n")
@@ -470,6 +513,19 @@ class TrainingDiagnosticsLogger:
             },
             "reward_component_means": metric_means(self.reward_component_sums, self.reward_component_counts),
             "reward_component_means_bad_only": metric_means(self.reward_component_bad_sums, self.reward_component_bad_counts),
+            "reward_alignment": {
+                "positive_crash_rate": float(self.crash_positive_count / self.crash_with_reward_count) if self.crash_with_reward_count > 0 else None,
+                "positive_out_of_bounds_crash_rate": float(self.out_of_bounds_crash_positive_count / self.out_of_bounds_crash_with_reward_count) if self.out_of_bounds_crash_with_reward_count > 0 else None,
+                "positive_contact_crash_rate": float(self.contact_crash_positive_count / self.contact_crash_with_reward_count) if self.contact_crash_with_reward_count > 0 else None,
+                "counts": {
+                    "crash_with_reward": int(self.crash_with_reward_count),
+                    "crash_positive": int(self.crash_positive_count),
+                    "out_of_bounds_crash_with_reward": int(self.out_of_bounds_crash_with_reward_count),
+                    "out_of_bounds_crash_positive": int(self.out_of_bounds_crash_positive_count),
+                    "contact_crash_with_reward": int(self.contact_crash_with_reward_count),
+                    "contact_crash_positive": int(self.contact_crash_positive_count)
+                }
+            },
             "bad_episode_top_k": int(len(ranked_bad)),
             "files": {
                 "episodes_compact": self.episodes_path,
@@ -509,7 +565,7 @@ class ProgressCallback(BaseCallback):
 
         # Debug metrics storage
         if config.DEBUG_MODE:
-            self.reward_components = {k: [] for k in ['progress', 'velocity', 'proximity', 'obstacle', 'step_penalty', 'exploration', 'terminal', 'efficiency_bonus', 'yaw_penalty', 'heading', 'smoothness']}
+            self.reward_components = {k: [] for k in ['progress', 'velocity', 'proximity', 'obstacle', 'boundary', 'step_penalty', 'exploration', 'terminal', 'efficiency_bonus', 'yaw_penalty', 'heading', 'smoothness']}
             self.navigation_metrics = {'path_efficiency': [], 'avg_heading_error': [], 'avg_speed': []}
             self.episode_metrics = {'start_distance': [], 'min_goal_distance': [], 'closest_obstacle': [], 'n_near_misses': []}
             self.action_stats = {'action_mean': [], 'action_std': [], 'action_smoothness': []}
@@ -688,9 +744,10 @@ class ProgressCallback(BaseCallback):
                 vel = np.mean(self.reward_components['velocity'][-recent_n:])
                 prox = np.mean(self.reward_components['proximity'][-recent_n:])
                 obst = np.mean(self.reward_components['obstacle'][-recent_n:])
+                bound = np.mean(self.reward_components['boundary'][-recent_n:]) if len(self.reward_components['boundary']) > 0 else 0
                 step = np.mean(self.reward_components['step_penalty'][-recent_n:])
                 term = np.mean(self.reward_components['terminal'][-recent_n:]) if len(self.reward_components['terminal']) > 0 else 0
-                print(f"  Reward   : total={avg_reward:7.1f} | prog={prog:5.1f} | vel={vel:4.1f} | prox={prox:4.1f} | obst={obst:5.1f} | term={term:5.1f}")
+                print(f"  Reward   : total={avg_reward:7.1f} | prog={prog:5.1f} | vel={vel:4.1f} | prox={prox:4.1f} | obst={obst:5.1f} | bound={bound:5.1f} | term={term:5.1f}")
 
             # Navigation metrics
             if self.config.LOG_NAVIGATION_METRICS and len(self.navigation_metrics['path_efficiency']) > 0:

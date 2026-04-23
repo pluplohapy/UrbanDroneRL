@@ -336,6 +336,15 @@ class NavAviaryWithPlanner(NavAviary):
         else:
             self._log_reward_component('obstacle', 0.0)
 
+        # Boundary penalty - discourages flying too close to arena borders
+        boundary_dist = self._boundary_clearance(drone_pos)
+        if boundary_dist < config.REWARD_BOUNDARY_THRESHOLD:
+            boundary_penalty = config.REWARD_BOUNDARY_SCALE * np.exp(-max(boundary_dist, 0.0))
+            reward_boundary = self._log_reward_component('boundary', -boundary_penalty)
+            reward += reward_boundary
+        else:
+            self._log_reward_component('boundary', 0.0)
+
         # Step penalty
         reward_step = self._log_reward_component('step_penalty', -config.REWARD_STEP_PENALTY)
         reward += reward_step
@@ -467,6 +476,10 @@ class NavAviaryWithPlanner(NavAviary):
                 reward += reward_terminal
             elif info["is_crash"]:
                 reward_terminal = config.REWARD_CRASH
+                if info.get("out_of_bounds", False):
+                    reward_terminal += config.REWARD_OUT_OF_BOUNDS_EXTRA
+                if info.get("has_contact", False) and not info.get("out_of_bounds", False):
+                    reward_terminal += config.REWARD_COLLISION_EXTRA
                 reward += reward_terminal
 
         # Add timeout penalty if episode ends without success

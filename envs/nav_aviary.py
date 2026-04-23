@@ -250,7 +250,15 @@ class NavAviary(BaseRLAviary):
             drone_pos[2] > self.arena_height
         )
         is_crash = has_relevant_contact or out_of_bounds
-        return is_success, is_crash
+        return is_success, is_crash, out_of_bounds, has_relevant_contact
+
+    def _boundary_clearance(self, drone_pos):
+        """Distance to nearest arena boundary (including floor/ceiling)."""
+        dx = self.arena_size_x / 2 - abs(float(drone_pos[0]))
+        dy = self.arena_size_y / 2 - abs(float(drone_pos[1]))
+        dz_low = float(drone_pos[2]) - 0.1
+        dz_high = self.arena_height - float(drone_pos[2])
+        return min(dx, dy, dz_low, dz_high)
 
     def _respawn_drone(self, drone_id):
         """Respawn one drone at its start location (swarm mode)."""
@@ -815,6 +823,10 @@ class NavAviary(BaseRLAviary):
                 if min_dist < config.REWARD_PROXIMITY_THRESHOLD:
                     reward_i += -config.REWARD_PROXIMITY_SCALE * np.exp(-min_dist)
 
+                boundary_dist = self._boundary_clearance(drone_pos)
+                if boundary_dist < config.REWARD_BOUNDARY_THRESHOLD:
+                    reward_i += -config.REWARD_BOUNDARY_SCALE * np.exp(-max(boundary_dist, 0.0))
+
                 reward_i += -config.REWARD_STEP_PENALTY
                 total_reward += reward_i
 
@@ -909,6 +921,15 @@ class NavAviary(BaseRLAviary):
             reward += reward_obstacle
         else:
             self._log_reward_component('obstacle', 0.0)
+
+        # Boundary penalty - discourages flying too close to arena borders
+        boundary_dist = self._boundary_clearance(drone_pos)
+        if boundary_dist < config.REWARD_BOUNDARY_THRESHOLD:
+            boundary_penalty = config.REWARD_BOUNDARY_SCALE * np.exp(-max(boundary_dist, 0.0))
+            reward_boundary = self._log_reward_component('boundary', -boundary_penalty)
+            reward += reward_boundary
+        else:
+            self._log_reward_component('boundary', 0.0)
 
         # Step penalty
         reward_step = self._log_reward_component('step_penalty', -config.REWARD_STEP_PENALTY)
@@ -1063,6 +1084,7 @@ class NavAviary(BaseRLAviary):
             "is_crash": is_crash,
             "dist_to_goal": dist_to_goal,
             "min_ray_dist": min_ray_dist,
+            "boundary_dist": self._boundary_clearance(drone_pos),
             "step": self.control_step_counter,
             "has_contact": bool(len(contact_points) > 0),
             "out_of_bounds": bool(out_of_bounds),
@@ -1262,7 +1284,7 @@ class NavAviary(BaseRLAviary):
 
             reward_terminal = 0.0
             for i in range(self.num_drones):
-                is_success, is_crash = self._check_drone_terminal(i)
+                is_success, is_crash, out_of_bounds, has_contact = self._check_drone_terminal(i)
                 if is_success:
                     self.swarm_successes_total += 1
                     bonus = config.REWARD_SUCCESS
@@ -1275,6 +1297,10 @@ class NavAviary(BaseRLAviary):
                 elif is_crash:
                     self.swarm_crashes_total += 1
                     reward_terminal += config.REWARD_CRASH
+                    if out_of_bounds:
+                        reward_terminal += config.REWARD_OUT_OF_BOUNDS_EXTRA
+                    if has_contact and not out_of_bounds:
+                        reward_terminal += config.REWARD_COLLISION_EXTRA
                     self.swarm_respawns_total += 1
                     self._respawn_drone(i)
 
@@ -1338,6 +1364,10 @@ class NavAviary(BaseRLAviary):
                 reward += reward_terminal
             elif info["is_crash"]:
                 reward_terminal = config.REWARD_CRASH
+                if info.get("out_of_bounds", False):
+                    reward_terminal += config.REWARD_OUT_OF_BOUNDS_EXTRA
+                if info.get("has_contact", False) and not info.get("out_of_bounds", False):
+                    reward_terminal += config.REWARD_COLLISION_EXTRA
                 reward += reward_terminal
 
         # Timeout penalty (only for timeout, not crash)
