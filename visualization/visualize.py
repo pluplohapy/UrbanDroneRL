@@ -5,9 +5,15 @@ Shows the drone flying in PyBullet GUI.
 
 import numpy as np
 import time
+import importlib
+import os
+import sys
 import pybullet as p
 from stable_baselines3 import PPO
 from stable_baselines3.common.vec_env import VecNormalize, DummyVecEnv
+
+# Add project root to path to support `python visualization/visualize.py`.
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from envs.nav_aviary import NavAviary
 from scenarios.stage0_empty import Stage0Scenario
@@ -24,7 +30,8 @@ def visualize_flight(model_path="models/ppo_drone_nav_test",
                      stage=0,
                      obstacle_type='random',
                      watch_fps=60.0,
-                     show_paths=True):
+                     show_paths=True,
+                     safety_shield=True):
     """
     Visualize trained model flying in PyBullet GUI.
 
@@ -41,9 +48,13 @@ def visualize_flight(model_path="models/ppo_drone_nav_test",
     print("=" * 60)
     print("DRONE NAVIGATION VISUALIZATION")
     print("=" * 60)
-    print(f"[CONFIG] watch_fps={watch_fps}, show_paths={show_paths}")
+    print(f"[CONFIG] watch_fps={watch_fps}, show_paths={show_paths}, safety_shield={safety_shield}")
     if watch_fps <= 0:
         raise ValueError("watch_fps must be > 0")
+
+    # Shield mode for visualization can be controlled independently from training defaults.
+    runtime_config = importlib.import_module("config")
+    runtime_config.SAFETY_SHIELD_ENABLED = bool(safety_shield)
 
     # Create environment with GUI FIRST
     print("\n[SETUP] Creating visualization environment...")
@@ -172,7 +183,6 @@ def visualize_flight(model_path="models/ppo_drone_nav_test",
             if len(step_result) == 5:
                 obs, reward, terminated, truncated, info = step_result
                 done = [terminated[0] or truncated[0]]
-                print(f"  [DEBUG STEP] terminated={terminated[0]}, truncated={truncated[0]}")
             else:
                 obs, reward, done, info = step_result
                 terminated = done
@@ -182,19 +192,15 @@ def visualize_flight(model_path="models/ppo_drone_nav_test",
             step += 1
 
             if done[0]:
-                # Get position AFTER step (where crash actually happened)
-                pos_after_step = env.envs[0]._getDroneStateVector(0)[:3]
-
-                # Use curr_pos (position BEFORE step) for trajectory
-                final_pos = curr_pos
+                # NOTE: In DummyVecEnv, done-step may auto-reset internally.
+                # Read terminal state from info to avoid false "teleport" diagnostics.
+                final_pos = np.array(info[0].get("final_pos", curr_pos), dtype=float)
+                pos_after_step = final_pos
 
                 # Check termination reason
                 is_success = info[0].get("is_success", False)
                 is_crash = info[0].get("is_crash", False)
-
-                # Check contact points directly
-                contact_points = p.getContactPoints(bodyA=env.envs[0].DRONE_IDS[0], physicsClientId=env.envs[0].CLIENT)
-                has_contact = len(contact_points) > 0
+                has_contact = bool(info[0].get("has_contact", False))
 
                 # Check if out of bounds BEFORE step
                 arena_x = env.envs[0].arena_size_x / 2
@@ -208,13 +214,8 @@ def visualize_flight(model_path="models/ppo_drone_nav_test",
                     final_pos[2] > arena_z
                 )
 
-                # Check if out of bounds AFTER step (where it actually crashed)
-                out_of_bounds_after = (
-                    abs(pos_after_step[0]) > arena_x or
-                    abs(pos_after_step[1]) > arena_y or
-                    pos_after_step[2] < 0.1 or
-                    pos_after_step[2] > arena_z
-                )
+                # Trust env-provided terminal flag for post-step bounds.
+                out_of_bounds_after = bool(info[0].get("out_of_bounds", False))
 
                 # Debug output
                 print(f"\n  [DEBUG] Pos BEFORE step: [{final_pos[0]:.2f}, {final_pos[1]:.2f}, {final_pos[2]:.2f}]")
@@ -299,6 +300,11 @@ if __name__ == "__main__":
                         help="Draw trajectory lines in GUI")
     parser.add_argument("--no-show-paths", action="store_true",
                         help="Disable trajectory lines in GUI")
+    parser.add_argument("--safety-shield", dest="safety_shield", action="store_true",
+                        help="Enable safety shield during visualization (default)")
+    parser.add_argument("--no-safety-shield", dest="safety_shield", action="store_false",
+                        help="Disable safety shield during visualization")
+    parser.set_defaults(safety_shield=True)
 
     args = parser.parse_args()
     show_paths = args.show_paths or (not args.no_show_paths)
@@ -317,5 +323,6 @@ if __name__ == "__main__":
         stage=stage,
         obstacle_type=args.obstacle_type,
         watch_fps=args.watch_fps,
-        show_paths=show_paths
+        show_paths=show_paths,
+        safety_shield=args.safety_shield
     )

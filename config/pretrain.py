@@ -25,6 +25,14 @@ GOAL_ZONE_Z = (0.8, 1.5)     # Lower height
 # ===== NO PLANNER FOR PRETRAIN =====
 USE_PLANNER = False
 
+# ===== CYLINDER MAP QUALITY (ANTI-DEAD-END) =====
+# Keep cylinders away from borders and from each other, and require a
+# feasible XY corridor from start to goal during sampling.
+CYLINDER_WALL_MARGIN = 0.35
+CYLINDER_PAIR_CLEARANCE = 0.45
+CYLINDER_PATH_CLEARANCE = 0.45
+CYLINDER_PATH_GRID_RESOLUTION = 0.20
+
 # ===== OBSTACLE TYPES CONFIGURATION =====
 OBSTACLE_TYPES = {
     'empty': {

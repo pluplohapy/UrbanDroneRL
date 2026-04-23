@@ -16,6 +16,7 @@ import sys
 import argparse
 import json
 import heapq
+import importlib
 import numpy as np
 import torch
 import warnings
@@ -140,6 +141,17 @@ class TrainingDiagnosticsLogger:
                 "crash": float(config.REWARD_CRASH),
                 "out_of_bounds_extra": float(config.REWARD_OUT_OF_BOUNDS_EXTRA),
                 "collision_extra": float(config.REWARD_COLLISION_EXTRA)
+            },
+            "safety_shield": {
+                "enabled": bool(getattr(config, "SAFETY_SHIELD_ENABLED", False)),
+                "soft_clearance": float(getattr(config, "SAFETY_SHIELD_SOFT_CLEARANCE", 0.0)),
+                "hard_clearance": float(getattr(config, "SAFETY_SHIELD_HARD_CLEARANCE", 0.0)),
+                "avoid_gain": float(getattr(config, "SAFETY_SHIELD_AVOID_GAIN", 0.0)),
+                "brake_gain": float(getattr(config, "SAFETY_SHIELD_BRAKE_GAIN", 0.0)),
+                "max_yaw": float(getattr(config, "SAFETY_SHIELD_MAX_YAW", 1.0)),
+                "topk": int(getattr(config, "SAFETY_SHIELD_TOPK", 1)),
+                "vertical_gain": float(getattr(config, "SAFETY_SHIELD_VERTICAL_GAIN", 0.0)),
+                "hard_brake_scale": float(getattr(config, "SAFETY_SHIELD_HARD_BRAKE_SCALE", 0.0))
             }
         }
         if extra_config is not None:
@@ -312,6 +324,8 @@ class TrainingDiagnosticsLogger:
         closest_obstacle = self._safe_float(info.get("closest_obstacle"))
         min_ray_dist = self._safe_float(info.get("min_ray_dist"))
         boundary_dist = self._safe_float(info.get("boundary_dist"))
+        shield_last_min_dist = self._safe_float(info.get("shield_last_min_dist"))
+        shield_intervention_ratio = self._safe_float(info.get("shield_intervention_ratio"))
         avg_speed = self._safe_float(info.get("avg_speed"))
         avg_heading_error = self._safe_float(info.get("avg_heading_error"))
         path_efficiency = self._safe_float(info.get("path_efficiency"))
@@ -337,6 +351,8 @@ class TrainingDiagnosticsLogger:
             "closest_obstacle": closest_obstacle,
             "min_ray_dist": min_ray_dist,
             "boundary_dist": boundary_dist,
+            "shield_last_min_dist": shield_last_min_dist,
+            "shield_intervention_ratio": shield_intervention_ratio,
             "avg_speed": avg_speed,
             "avg_heading_error": avg_heading_error,
             "path_efficiency": path_efficiency,
@@ -396,6 +412,8 @@ class TrainingDiagnosticsLogger:
             "progress_ratio",
             "closest_obstacle",
             "boundary_dist",
+            "shield_last_min_dist",
+            "shield_intervention_ratio",
             "avg_speed",
             "avg_heading_error",
             "path_efficiency",
@@ -934,6 +952,10 @@ def main():
                         help='Disable trajectory drawing even in watch mode')
     parser.add_argument('--swarm-drones', type=int, default=1,
                         help='Number of drones in one shared map (parallel in one env)')
+    parser.add_argument('--safety-shield', dest='safety_shield', action='store_true',
+                        help='Enable safety shield during training')
+    parser.add_argument('--no-safety-shield', dest='safety_shield', action='store_false',
+                        help='Disable safety shield during training (recommended for training from scratch)')
     parser.add_argument('--diag', dest='diag', action='store_true',
                         help='Enable structured diagnostics logs (default: enabled)')
     parser.add_argument('--no-diag', dest='diag', action='store_false',
@@ -946,12 +968,18 @@ def main():
                         help='Rolling window size for milestone snapshots')
     parser.add_argument('--diag-bad-topk', type=int, default=300,
                         help='Keep top-K worst failure episodes in diagnostics')
-    parser.set_defaults(diag=True)
+    parser.set_defaults(diag=True, safety_shield=None)
 
     args = parser.parse_args()
 
     # Load config for the specified stage
     config = load_config(args.stage)
+    runtime_config = importlib.import_module("config")
+
+    # Safety shield toggle (training-friendly default: disabled unless explicitly enabled)
+    if args.safety_shield is not None:
+        config.SAFETY_SHIELD_ENABLED = bool(args.safety_shield)
+    runtime_config.SAFETY_SHIELD_ENABLED = bool(getattr(config, "SAFETY_SHIELD_ENABLED", False))
 
     # Enable debug mode if requested
     if args.debug:
@@ -1068,6 +1096,7 @@ def main():
     print(f"  Show paths: {show_paths}")
     print(f"  Swarm drones: {swarm_drones}")
     print(f"  Diagnostics logs: {args.diag}")
+    print(f"  Safety shield: {bool(getattr(config, 'SAFETY_SHIELD_ENABLED', False))}")
     if watch_mode:
         print(f"  Watch FPS: {args.watch_fps}")
     print(f"  Arena: {config.ARENA_SIZE_X}x{config.ARENA_SIZE_Y}x{config.ARENA_HEIGHT}m")
@@ -1192,6 +1221,7 @@ def main():
             "watch_mode": watch_mode,
             "n_envs": int(n_envs),
             "swarm_drones": int(swarm_drones),
+            "safety_shield_enabled": bool(getattr(config, "SAFETY_SHIELD_ENABLED", False)),
             "obstacle_type": args.obstacle_type if stage == "pretrain" else None,
             "continue_training": bool(args.continue_training),
             "timesteps_target": int(timesteps)

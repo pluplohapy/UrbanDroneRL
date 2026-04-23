@@ -3,8 +3,9 @@ Stage Pretrain: Diverse obstacles for curriculum learning.
 No RRT* planner - pure RL training.
 """
 
+from collections import deque
 import numpy as np
-from typing import Tuple
+from typing import List, Tuple
 from scenarios.base_scenario import BaseScenario
 from scenarios.pretrain_obstacles import (
     CylinderObstacle, SphereObstacle, WallObstacle,
@@ -132,21 +133,172 @@ class StagePretrainScenario(BaseScenario):
 
     def _generate_cylinders(self, n_obstacles: int, params: dict,
                            start_pos: np.ndarray, goal_pos: np.ndarray, client_id: int):
-        """Generate cylindrical obstacles."""
-        for _ in range(n_obstacles):
-            radius = self.rng.uniform(*params['radius'])
-            height = self.rng.uniform(*params['height'])
+        """
+        Generate cylindrical obstacles with map-quality constraints.
 
-            # Find valid position
-            for _ in range(50):
-                x = self.rng.uniform(-self.config.ARENA_SIZE_X/2 + 1, self.config.ARENA_SIZE_X/2 - 1)
-                y = self.rng.uniform(-self.config.ARENA_SIZE_Y/2 + 1, self.config.ARENA_SIZE_Y/2 - 1)
-                pos = np.array([x, y, 0.0])
+        We reject layouts that create dead-ends/blocked passages by requiring:
+        1) minimum offset from arena walls,
+        2) minimum spacing between cylinders,
+        3) a traversable 2D path from start to goal on an inflated occupancy grid.
+        """
+        wall_margin = float(getattr(self.config, "CYLINDER_WALL_MARGIN", 0.35))
+        pair_clearance = float(getattr(self.config, "CYLINDER_PAIR_CLEARANCE", 0.45))
+        path_clearance = float(getattr(self.config, "CYLINDER_PATH_CLEARANCE", 0.45))
+        grid_resolution = float(getattr(self.config, "CYLINDER_PATH_GRID_RESOLUTION", 0.20))
 
-                if self._is_valid_position(pos, radius, start_pos, goal_pos):
+        # If strict constraints are hard to satisfy, gradually reduce obstacle count.
+        for target_count in range(n_obstacles, 0, -1):
+            for _ in range(40):
+                layout = self._sample_cylinder_layout(
+                    target_count=target_count,
+                    params=params,
+                    start_pos=start_pos,
+                    goal_pos=goal_pos,
+                    wall_margin=wall_margin,
+                    pair_clearance=pair_clearance,
+                    attempts_per_obstacle=120,
+                )
+                if not layout:
+                    continue
+
+                if not self._has_feasible_path_2d(
+                    start_pos=start_pos,
+                    goal_pos=goal_pos,
+                    cylinders=layout,
+                    clearance=path_clearance,
+                    grid_resolution=grid_resolution,
+                ):
+                    continue
+
+                for pos, radius, height in layout:
                     obstacle = CylinderObstacle(pos, radius, height, client_id)
                     self.obstacles.append(obstacle)
+                if target_count < n_obstacles:
+                    print(
+                        f"[SCENARIO] cylinders reduced from {n_obstacles} "
+                        f"to {target_count} to keep map feasible"
+                    )
+                return
+
+        print("[SCENARIO][WARN] Could not sample feasible cylinder map, using empty layout")
+
+    def _sample_cylinder_layout(
+        self,
+        target_count: int,
+        params: dict,
+        start_pos: np.ndarray,
+        goal_pos: np.ndarray,
+        wall_margin: float,
+        pair_clearance: float,
+        attempts_per_obstacle: int = 120,
+    ) -> List[Tuple[np.ndarray, float, float]]:
+        """Sample non-overlapping cylinders with wall/start/goal clearance."""
+        half_x = self.config.ARENA_SIZE_X / 2.0
+        half_y = self.config.ARENA_SIZE_Y / 2.0
+        layout: List[Tuple[np.ndarray, float, float]] = []
+
+        for _ in range(target_count):
+            placed = False
+            for _ in range(attempts_per_obstacle):
+                radius = self.rng.uniform(*params["radius"])
+                height = self.rng.uniform(*params["height"])
+
+                x_min = -half_x + radius + wall_margin
+                x_max = half_x - radius - wall_margin
+                y_min = -half_y + radius + wall_margin
+                y_max = half_y - radius - wall_margin
+                if x_min >= x_max or y_min >= y_max:
+                    return []
+
+                x = self.rng.uniform(x_min, x_max)
+                y = self.rng.uniform(y_min, y_max)
+                pos = np.array([x, y, 0.0])
+
+                placed_xy = [(p, r) for p, r, _ in layout]
+                if self._is_valid_position(
+                    pos=pos,
+                    radius=radius,
+                    start_pos=start_pos,
+                    goal_pos=goal_pos,
+                    placed=placed_xy,
+                    min_pair_clearance=pair_clearance,
+                    wall_margin=wall_margin,
+                ):
+                    layout.append((pos, radius, height))
+                    placed = True
                     break
+
+            if not placed:
+                return []
+
+        return layout
+
+    def _has_feasible_path_2d(
+        self,
+        start_pos: np.ndarray,
+        goal_pos: np.ndarray,
+        cylinders: List[Tuple[np.ndarray, float, float]],
+        clearance: float,
+        grid_resolution: float,
+    ) -> bool:
+        """
+        Fast XY reachability check on an inflated occupancy grid.
+
+        Cylinders and arena borders are expanded by `clearance` to ensure that
+        accepted maps still contain a practical corridor for the drone body.
+        """
+        half_x = self.config.ARENA_SIZE_X / 2.0
+        half_y = self.config.ARENA_SIZE_Y / 2.0
+        x_min, x_max = -half_x, half_x
+        y_min, y_max = -half_y, half_y
+
+        x_vals = np.arange(x_min, x_max + grid_resolution * 0.5, grid_resolution)
+        y_vals = np.arange(y_min, y_max + grid_resolution * 0.5, grid_resolution)
+        xx, yy = np.meshgrid(x_vals, y_vals)
+
+        # Block near walls to avoid "wall-hugging" passages that immediately OOB.
+        blocked = (np.abs(xx) >= (half_x - clearance)) | (np.abs(yy) >= (half_y - clearance))
+
+        for pos, radius, _ in cylinders:
+            inflated = radius + clearance
+            blocked |= (xx - pos[0]) ** 2 + (yy - pos[1]) ** 2 <= inflated ** 2
+
+        ny, nx = blocked.shape
+
+        def _to_idx(p: np.ndarray) -> Tuple[int, int]:
+            ix = int(np.clip(np.rint((p[0] - x_min) / grid_resolution), 0, nx - 1))
+            iy = int(np.clip(np.rint((p[1] - y_min) / grid_resolution), 0, ny - 1))
+            return iy, ix
+
+        start_idx = _to_idx(start_pos)
+        goal_idx = _to_idx(goal_pos)
+        if blocked[start_idx] or blocked[goal_idx]:
+            return False
+
+        queue = deque([start_idx])
+        visited = np.zeros_like(blocked, dtype=bool)
+        visited[start_idx] = True
+        neighbors = [
+            (-1, 0), (1, 0), (0, -1), (0, 1),
+            (-1, -1), (-1, 1), (1, -1), (1, 1),
+        ]
+
+        while queue:
+            iy, ix = queue.popleft()
+            if (iy, ix) == goal_idx:
+                return True
+
+            for dy, dx in neighbors:
+                ny_i = iy + dy
+                nx_i = ix + dx
+                if ny_i < 0 or ny_i >= ny or nx_i < 0 or nx_i >= nx:
+                    continue
+                if visited[ny_i, nx_i] or blocked[ny_i, nx_i]:
+                    continue
+                visited[ny_i, nx_i] = True
+                queue.append((ny_i, nx_i))
+
+        return False
 
     def _generate_spheres(self, n_obstacles: int, params: dict,
                          start_pos: np.ndarray, goal_pos: np.ndarray, client_id: int):
@@ -264,8 +416,16 @@ class StagePretrainScenario(BaseScenario):
                     self.obstacles.append(obstacle)
                     break
 
-    def _is_valid_position(self, pos: np.ndarray, radius: float,
-                          start_pos: np.ndarray, goal_pos: np.ndarray) -> bool:
+    def _is_valid_position(
+        self,
+        pos: np.ndarray,
+        radius: float,
+        start_pos: np.ndarray,
+        goal_pos: np.ndarray,
+        placed: List[Tuple[np.ndarray, float]] = None,
+        min_pair_clearance: float = 0.0,
+        wall_margin: float = 0.0,
+    ) -> bool:
         """
         Check if position is valid (not too close to start/goal).
 
@@ -274,10 +434,21 @@ class StagePretrainScenario(BaseScenario):
             radius: Effective radius of obstacle
             start_pos: Start position
             goal_pos: Goal position
+            placed: Already placed obstacle centers/radii in XY
+            min_pair_clearance: Extra XY spacing between obstacles
+            wall_margin: Extra spacing from arena walls
 
         Returns:
             True if valid position
         """
+        # Keep obstacle away from arena borders.
+        half_x = self.config.ARENA_SIZE_X / 2.0
+        half_y = self.config.ARENA_SIZE_Y / 2.0
+        if abs(pos[0]) + radius + wall_margin > half_x:
+            return False
+        if abs(pos[1]) + radius + wall_margin > half_y:
+            return False
+
         # Check clearance from start and goal
         dist_to_start = np.linalg.norm(pos[:2] - start_pos[:2])
         dist_to_goal = np.linalg.norm(pos[:2] - goal_pos[:2])
@@ -285,6 +456,13 @@ class StagePretrainScenario(BaseScenario):
         min_clearance = 1.0  # From base config
         if dist_to_start < min_clearance + radius or dist_to_goal < min_clearance + radius:
             return False
+
+        # Check clearance from already placed obstacles in XY.
+        if placed:
+            for other_pos, other_radius in placed:
+                dist_to_other = np.linalg.norm(pos[:2] - other_pos[:2])
+                if dist_to_other < radius + other_radius + min_pair_clearance:
+                    return False
 
         return True
 

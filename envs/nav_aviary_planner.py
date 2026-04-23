@@ -395,6 +395,9 @@ class NavAviaryWithPlanner(NavAviary):
         Returns:
             observation, reward, terminated, truncated, info
         """
+        action = np.clip(np.asarray(action, dtype=np.float32), -1.0, 1.0)
+        action = self._apply_safety_shield_single(action, drone_id=0)
+
         # Store action
         self.prev_prev_action = self.prev_action.copy()
         self.prev_action = action.copy()
