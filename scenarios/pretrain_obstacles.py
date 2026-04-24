@@ -174,10 +174,21 @@ class WallObstacle:
 
 
 class BeamObstacle:
-    """Horizontal beam obstacle (может качаться)."""
+    """Horizontal beam obstacle that can swing around a chosen axis."""
 
-    def __init__(self, position, length, height, thickness, swing_angle, swing_period, physics_client):
-        self.position = position
+    def __init__(
+        self,
+        position,
+        length,
+        height,
+        thickness,
+        swing_angle,
+        swing_period,
+        physics_client,
+        swing_axis="yaw",
+        phase=0.0
+    ):
+        self.position = np.array(position)
         self.length = length
         self.height = height
         self.thickness = thickness
@@ -186,6 +197,8 @@ class BeamObstacle:
         self.client = physics_client
         self.dynamic = swing_angle > 0
         self.time = 0.0
+        self.swing_axis = swing_axis
+        self.phase = phase
 
         # Create collision shape (box)
         collision_shape = p.createCollisionShape(
@@ -208,6 +221,7 @@ class BeamObstacle:
             baseCollisionShapeIndex=collision_shape,
             baseVisualShapeIndex=visual_shape,
             basePosition=[position[0], position[1], height],
+            baseOrientation=self._orientation(),
             physicsClientId=self.client
         )
 
@@ -217,6 +231,17 @@ class BeamObstacle:
     def get_position(self):
         return self.position
 
+    def _angle(self):
+        return self.swing_angle * np.sin(2 * np.pi * self.time / self.swing_period + self.phase)
+
+    def _orientation(self):
+        angle = self._angle()
+        if self.swing_axis == "pitch":
+            return p.getQuaternionFromEuler([0, angle, 0])
+        if self.swing_axis == "roll":
+            return p.getQuaternionFromEuler([angle, 0, 0])
+        return p.getQuaternionFromEuler([0, 0, angle])
+
     def update(self, dt):
         """Swinging motion."""
         if not self.dynamic:
@@ -224,15 +249,11 @@ class BeamObstacle:
 
         self.time += dt
 
-        # Swing angle
-        angle = self.swing_angle * np.sin(2 * np.pi * self.time / self.swing_period)
-
         # Update orientation
-        quat = p.getQuaternionFromEuler([0, 0, angle])
         p.resetBasePositionAndOrientation(
             self.body_id,
             [self.position[0], self.position[1], self.height],
-            quat,
+            self._orientation(),
             physicsClientId=self.client
         )
 
@@ -294,7 +315,18 @@ class BoxObstacle:
 class SwingingStickObstacle:
     """Swinging stick obstacle (ветка)."""
 
-    def __init__(self, position, length, thickness, swing_angle, swing_period, physics_client, vertical_swing=False, vertical_amplitude=0.15):
+    def __init__(
+        self,
+        position,
+        length,
+        thickness,
+        swing_angle,
+        swing_period,
+        physics_client,
+        vertical_swing=False,
+        vertical_amplitude=0.15,
+        phase=0.0
+    ):
         self.initial_position = np.array(position)
         self.position = np.array(position)
         self.length = length
@@ -305,6 +337,7 @@ class SwingingStickObstacle:
         self.dynamic = True
         self.time = 0.0
         self.vertical_swing = vertical_swing
+        self.phase = phase
 
         # For collision checking
         self.radius = length / 2
@@ -331,16 +364,15 @@ class SwingingStickObstacle:
             physicsClientId=self.client
         )
 
-        # Initial orientation - horizontal (parallel to floor) and perpendicular to flight path
-        # Capsule default is along Z, rotate to X axis (perpendicular to Y corridor)
-        initial_quat = p.getQuaternionFromEuler([0, np.pi/2, 0])
+        initial_position, initial_quat = self._body_state()
+        self.position = initial_position
 
         # Create body
         self.body_id = p.createMultiBody(
             baseMass=0,
             baseCollisionShapeIndex=collision_shape,
             baseVisualShapeIndex=visual_shape,
-            basePosition=position,
+            basePosition=initial_position,
             baseOrientation=initial_quat,
             physicsClientId=self.client
         )
@@ -348,24 +380,28 @@ class SwingingStickObstacle:
     def get_position(self):
         return self.position
 
+    def _phase_angle(self):
+        return 2 * np.pi * self.time / self.swing_period + self.phase
+
+    def _body_state(self):
+        phase_angle = self._phase_angle()
+
+        if self.vertical_swing:
+            vertical_offset = self.vertical_amplitude * np.sin(phase_angle)
+            new_position = self.initial_position + np.array([0, 0, vertical_offset])
+            quat = p.getQuaternionFromEuler([0, np.pi/2, 0])
+        else:
+            angle = self.swing_angle * np.sin(phase_angle)
+            new_position = self.initial_position
+            quat = p.getQuaternionFromEuler([0, np.pi/2, angle])
+
+        return new_position, quat
+
     def update(self, dt):
         """Swinging motion around anchor point with vertical movement."""
         self.time += dt
 
-        # Vertical movement (up-down like branches in wind)
-        if self.vertical_swing:
-            # Pure vertical movement without rotation
-            vertical_offset = self.vertical_amplitude * np.sin(2 * np.pi * self.vertical_frequency * self.time)
-            new_position = self.initial_position + np.array([0, 0, vertical_offset])
-
-            # Keep horizontal orientation perpendicular to flight path
-            quat = p.getQuaternionFromEuler([0, np.pi/2, 0])
-        else:
-            # Original swing behavior (rotation around Y axis)
-            angle = self.swing_angle * np.sin(2 * np.pi * self.time / self.swing_period)
-            new_position = self.initial_position
-            quat = p.getQuaternionFromEuler([0, np.pi/2, angle])
-
+        new_position, quat = self._body_state()
         self.position = new_position
 
         p.resetBasePositionAndOrientation(

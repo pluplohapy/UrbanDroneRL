@@ -52,6 +52,19 @@ CYLINDER_PAIR_CLEARANCE = 0.45
 CYLINDER_PATH_CLEARANCE = 0.45
 CYLINDER_PATH_GRID_RESOLUTION = 0.20
 
+# ===== DYNAMIC MAP QUALITY =====
+# Dynamic obstacles should teach timing and vertical avoidance, not create
+# impossible full-corridor gates. These constraints keep spawn/goal areas clear
+# and preserve a practical low passage under moving bars.
+DYNAMIC_START_GOAL_CLEARANCE = 1.1
+BEAM_PAIR_Y_CLEARANCE = 0.9
+BEAM_BOTTOM_GAP = 0.45
+BEAM_CEILING_GAP = 0.25
+STICK_PAIR_Y_CLEARANCE = 0.65
+STICK_BOTTOM_GAP_FRACTION = 1.0 / 3.0
+STICK_CEILING_GAP = 0.25
+STICK_SIDE_MARGIN = 0.15
+
 # ===== OBSTACLE TYPES CONFIGURATION =====
 OBSTACLE_TYPES = {
     'empty': {
@@ -87,14 +100,15 @@ OBSTACLE_TYPES = {
     },
 
     'beams': {
-        'name': 'Горизонтальные балки',
-        'count': (2, 3),
-        'length': (1.5, 3.0),
-        'height': (1.2, 2.5),
-        'thickness': 0.2,
+        'name': 'Вертикально качающиеся балки',
+        'count': (4, 6),
+        'length': (1.2, 2.2),
+        'height': (1.15, 2.15),
+        'thickness': 0.18,
         'dynamic': True,
-        'swing_angle': 15,
-        'swing_period': (3.0, 5.0)
+        'swing_angle': 45,
+        'swing_period': (3.0, 5.0),
+        'swing_axis': 'pitch'
     },
 
     'boxes': {
@@ -107,14 +121,14 @@ OBSTACLE_TYPES = {
 
     'swinging_sticks': {
         'name': 'Качающиеся палки (ветки)',
-        'count': (9, 18),  # x3 от предыдущего (было 3-6)
-        'length': (4.0, 4.0),  # Полная ширина коридора (4м)
-        'thickness': 0.12,  # Оставили как было
-        'swing_angle': 25,  # Движение вверх-вниз
-        'swing_period': (5.0, 9.0),  # x2 медленнее (было 2.5-4.5)
+        'count': (5, 8),
+        'length': (2.6, 3.7),
+        'thickness': 0.12,
+        'swing_angle': 25,
+        'swing_period': (5.0, 9.0),
         'dynamic': True,
-        'vertical_swing': True,  # Новый параметр для вертикального движения
-        'vertical_amplitude': (1.4, 1.4)  # Амплитуда движения от низа до верха (±1.4м от центра)
+        'vertical_swing': True,
+        'vertical_amplitude': (0.25, 0.65)
     }
 }
 

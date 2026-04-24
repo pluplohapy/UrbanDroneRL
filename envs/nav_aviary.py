@@ -465,11 +465,14 @@ class NavAviary(BaseRLAviary):
         self.scenario.obstacles = []
 
         if hasattr(self.scenario, '_generate_obstacles'):
-            obstacle_type = self.scenario.obstacle_type
-            if obstacle_type == 'random':
-                chosen_type = self.scenario.rng.choice(list(self.scenario.config.OBSTACLE_TYPES.keys()))
+            if hasattr(self.scenario, '_resolve_obstacle_type'):
+                chosen_type = self.scenario._resolve_obstacle_type()
             else:
-                chosen_type = obstacle_type
+                obstacle_type = self.scenario.obstacle_type
+                if obstacle_type == 'random':
+                    chosen_type = self.scenario.rng.choice(list(self.scenario.config.OBSTACLE_TYPES.keys()))
+                else:
+                    chosen_type = obstacle_type
             self.scenario._generate_obstacles(chosen_type, self.start_pos, self.goal_pos, self.CLIENT)
             return
 
@@ -557,7 +560,9 @@ class NavAviary(BaseRLAviary):
                     'height': float(obstacle.height),
                     'thickness': float(obstacle.thickness),
                     'swing_angle': float(np.degrees(obstacle.swing_angle)),
-                    'swing_period': float(obstacle.swing_period)
+                    'swing_period': float(obstacle.swing_period),
+                    'swing_axis': getattr(obstacle, 'swing_axis', 'yaw'),
+                    'phase': float(getattr(obstacle, 'phase', 0.0))
                 })
             elif obstacle_type == 'BoxObstacle':
                 specs.append({
@@ -575,7 +580,8 @@ class NavAviary(BaseRLAviary):
                     'swing_angle': float(np.degrees(obstacle.swing_angle)),
                     'swing_period': float(obstacle.swing_period),
                     'vertical_swing': bool(obstacle.vertical_swing),
-                    'vertical_amplitude': float(obstacle.vertical_amplitude)
+                    'vertical_amplitude': float(obstacle.vertical_amplitude),
+                    'phase': float(getattr(obstacle, 'phase', 0.0))
                 })
         return specs
 
@@ -642,7 +648,9 @@ class NavAviary(BaseRLAviary):
                     thickness=spec['thickness'],
                     swing_angle=spec['swing_angle'],
                     swing_period=spec['swing_period'],
-                    physics_client=self.CLIENT
+                    physics_client=self.CLIENT,
+                    swing_axis=spec.get('swing_axis', 'yaw'),
+                    phase=spec.get('phase', 0.0)
                 )
             elif obstacle_type == 'BoxObstacle':
                 obstacle = BoxObstacle(
@@ -660,7 +668,8 @@ class NavAviary(BaseRLAviary):
                     swing_period=spec['swing_period'],
                     physics_client=self.CLIENT,
                     vertical_swing=spec.get('vertical_swing', False),
-                    vertical_amplitude=spec.get('vertical_amplitude', 0.15)
+                    vertical_amplitude=spec.get('vertical_amplitude', 0.15),
+                    phase=spec.get('phase', 0.0)
                 )
             else:
                 print(f"[WARN] Unsupported obstacle type in fixed-map cache: {obstacle_type}")

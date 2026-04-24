@@ -362,26 +362,61 @@ class StagePretrainScenario(BaseScenario):
 
     def _generate_beams(self, n_obstacles: int, params: dict,
                        start_pos: np.ndarray, goal_pos: np.ndarray, client_id: int):
-        """Generate horizontal beam obstacles."""
-        for _ in range(n_obstacles):
-            length = self.rng.uniform(*params['length'])
-            height = self.rng.uniform(*params['height'])
-            thickness = params['thickness']
-            swing_angle = params.get('swing_angle', 0)
-            swing_period = self.rng.uniform(*params.get('swing_period', (3.0, 5.0)))
+        """Generate swinging beams with feasible spacing and vertical clearance."""
+        placed = []
+        half_x = self.config.ARENA_SIZE_X / 2.0
+        half_y = self.config.ARENA_SIZE_Y / 2.0
+        start_goal_clearance = float(getattr(self.config, "DYNAMIC_START_GOAL_CLEARANCE", 1.1))
+        pair_y_clearance = float(getattr(self.config, "BEAM_PAIR_Y_CLEARANCE", 0.9))
+        bottom_gap = float(getattr(self.config, "BEAM_BOTTOM_GAP", 0.45))
+        ceiling_gap = float(getattr(self.config, "BEAM_CEILING_GAP", 0.25))
+        swing_axis = params.get("swing_axis", "yaw")
 
-            # Find valid position
-            for _ in range(50):
-                x = self.rng.uniform(-self.config.ARENA_SIZE_X/2 + length/2,
-                                    self.config.ARENA_SIZE_X/2 - length/2)
-                y = self.rng.uniform(-self.config.ARENA_SIZE_Y/2 + length/2,
-                                    self.config.ARENA_SIZE_Y/2 - length/2)
+        for _ in range(n_obstacles):
+            for _ in range(120):
+                length = self.rng.uniform(*params['length'])
+                thickness = params['thickness']
+                swing_angle = self._sample_scalar(params.get('swing_angle', 0))
+                swing_period = self.rng.uniform(*params.get('swing_period', (3.0, 5.0)))
+                phase = self.rng.uniform(0.0, 2.0 * np.pi)
+
+                height_min, height_max = params['height']
+                if swing_axis in ("pitch", "roll"):
+                    angle_rad = np.radians(abs(swing_angle))
+                    vertical_reach = length * 0.5 * np.sin(angle_rad) + thickness * 0.5
+                    height_min = max(height_min, bottom_gap + vertical_reach)
+                    height_max = min(height_max, self.config.ARENA_HEIGHT - ceiling_gap - vertical_reach)
+                    if height_min >= height_max:
+                        continue
+
+                height = self.rng.uniform(height_min, height_max)
+
+                x_min = -half_x + length / 2.0
+                x_max = half_x - length / 2.0
+                y_min = -half_y + start_goal_clearance
+                y_max = half_y - start_goal_clearance
+                if x_min > x_max or y_min > y_max:
+                    continue
+
+                x = self.rng.uniform(x_min, x_max)
+                y = self.rng.uniform(y_min, y_max)
                 pos = np.array([x, y, 0.0])
 
-                if self._is_valid_position(pos, length/2, start_pos, goal_pos):
+                if self._is_valid_bar_position(
+                    pos=pos,
+                    length=length,
+                    thickness=thickness,
+                    start_pos=start_pos,
+                    goal_pos=goal_pos,
+                    placed=placed,
+                    min_start_goal_clearance=start_goal_clearance,
+                    min_pair_y_clearance=pair_y_clearance,
+                ):
                     obstacle = BeamObstacle(pos, length, height, thickness,
-                                          swing_angle, swing_period, client_id)
+                                            swing_angle, swing_period, client_id,
+                                            swing_axis=swing_axis, phase=phase)
                     self.obstacles.append(obstacle)
+                    placed.append((pos, length, thickness))
                     break
 
     def _generate_boxes(self, n_obstacles: int, params: dict,
@@ -404,34 +439,116 @@ class StagePretrainScenario(BaseScenario):
 
     def _generate_swinging_sticks(self, n_obstacles: int, params: dict,
                                   start_pos: np.ndarray, goal_pos: np.ndarray, client_id: int):
-        """Generate swinging stick obstacles (branches)."""
+        """Generate swinging sticks with varied height and guaranteed low gap."""
+        placed = []
+        half_x = self.config.ARENA_SIZE_X / 2.0
+        half_y = self.config.ARENA_SIZE_Y / 2.0
+        start_goal_clearance = float(getattr(self.config, "DYNAMIC_START_GOAL_CLEARANCE", 1.1))
+        pair_y_clearance = float(getattr(self.config, "STICK_PAIR_Y_CLEARANCE", 0.75))
+        bottom_gap = self.config.ARENA_HEIGHT * float(getattr(self.config, "STICK_BOTTOM_GAP_FRACTION", 1.0 / 3.0))
+        ceiling_gap = float(getattr(self.config, "STICK_CEILING_GAP", 0.25))
+        side_margin = float(getattr(self.config, "STICK_SIDE_MARGIN", 0.15))
+
         for _ in range(n_obstacles):
-            length = self.rng.uniform(*params['length'])
-            thickness = params['thickness']
-            swing_angle = params['swing_angle']
-            swing_period = self.rng.uniform(*params['swing_period'])
-            vertical_swing = params.get('vertical_swing', False)
+            for _ in range(160):
+                length = self.rng.uniform(*params['length'])
+                thickness = params['thickness']
+                swing_angle = params['swing_angle']
+                swing_period = self.rng.uniform(*params['swing_period'])
+                vertical_swing = params.get('vertical_swing', False)
+                vertical_amplitude = (
+                    self.rng.uniform(*params['vertical_amplitude'])
+                    if 'vertical_amplitude' in params
+                    else 0.15
+                )
+                if not vertical_swing:
+                    vertical_amplitude = 0.0
 
-            # Get vertical amplitude from config (default to 0.15 if not specified)
-            if 'vertical_amplitude' in params:
-                vertical_amplitude = self.rng.uniform(*params['vertical_amplitude'])
-            else:
-                vertical_amplitude = 0.15
+                z_min = bottom_gap + thickness + vertical_amplitude
+                z_max = self.config.ARENA_HEIGHT - ceiling_gap - thickness - vertical_amplitude
+                if z_min >= z_max:
+                    continue
 
-            # Find valid position (center of arena for X and Z, random Y along corridor)
-            for _ in range(50):
-                x = 0.0  # Always at center of corridor width
-                y = self.rng.uniform(-self.config.ARENA_SIZE_Y/2 + 1, self.config.ARENA_SIZE_Y/2 - 1)
-                # Place at center height so it can move full range (center ± amplitude)
-                z = self.config.ARENA_HEIGHT / 2  # Center at 1.5m for 3m height
+                x_min = -half_x + length / 2.0 + side_margin
+                x_max = half_x - length / 2.0 - side_margin
+                y_min = -half_y + start_goal_clearance
+                y_max = half_y - start_goal_clearance
+                if x_min > x_max or y_min > y_max:
+                    continue
+
+                x = self.rng.uniform(x_min, x_max)
+                y = self.rng.uniform(y_min, y_max)
+                z = self.rng.uniform(z_min, z_max)
+                phase = self.rng.uniform(0.0, 2.0 * np.pi)
                 pos = np.array([x, y, z])
 
-                if self._is_valid_position(pos, length/2, start_pos, goal_pos):
+                if self._is_valid_bar_position(
+                    pos=pos,
+                    length=length,
+                    thickness=thickness,
+                    start_pos=start_pos,
+                    goal_pos=goal_pos,
+                    placed=placed,
+                    min_start_goal_clearance=start_goal_clearance,
+                    min_pair_y_clearance=pair_y_clearance,
+                ):
                     obstacle = SwingingStickObstacle(pos, length, thickness,
                                                     swing_angle, swing_period, client_id,
-                                                    vertical_swing, vertical_amplitude)
+                                                    vertical_swing, vertical_amplitude,
+                                                    phase=phase)
                     self.obstacles.append(obstacle)
+                    placed.append((pos, length, thickness))
                     break
+
+    def _sample_scalar(self, value):
+        """Sample scalar config values that may be fixed or expressed as a range."""
+        if isinstance(value, (tuple, list)):
+            return self.rng.uniform(*value)
+        return value
+
+    @staticmethod
+    def _distance_point_to_x_bar(point: np.ndarray, bar_pos: np.ndarray, length: float) -> float:
+        """Distance in XY from a point to a bar segment aligned with the X axis."""
+        dx = max(abs(point[0] - bar_pos[0]) - length / 2.0, 0.0)
+        dy = abs(point[1] - bar_pos[1])
+        return float(np.hypot(dx, dy))
+
+    def _is_valid_bar_position(
+        self,
+        pos: np.ndarray,
+        length: float,
+        thickness: float,
+        start_pos: np.ndarray,
+        goal_pos: np.ndarray,
+        placed: List[Tuple[np.ndarray, float, float]],
+        min_start_goal_clearance: float,
+        min_pair_y_clearance: float,
+    ) -> bool:
+        """Validate an X-aligned bar without overestimating it as a large circle."""
+        half_x = self.config.ARENA_SIZE_X / 2.0
+        half_y = self.config.ARENA_SIZE_Y / 2.0
+        if pos[0] - length / 2.0 < -half_x or pos[0] + length / 2.0 > half_x:
+            return False
+        if abs(pos[1]) + thickness > half_y:
+            return False
+
+        required_clearance = min_start_goal_clearance + thickness
+        if self._distance_point_to_x_bar(start_pos, pos, length) < required_clearance:
+            return False
+        if self._distance_point_to_x_bar(goal_pos, pos, length) < required_clearance:
+            return False
+
+        for other_pos, other_length, other_thickness in placed:
+            left = pos[0] - length / 2.0
+            right = pos[0] + length / 2.0
+            other_left = other_pos[0] - other_length / 2.0
+            other_right = other_pos[0] + other_length / 2.0
+            expanded_overlap = min(right, other_right) - max(left, other_left)
+            y_clearance = min_pair_y_clearance + thickness + other_thickness
+            if expanded_overlap > -0.25 and abs(pos[1] - other_pos[1]) < y_clearance:
+                return False
+
+        return True
 
     def _is_valid_position(
         self,
