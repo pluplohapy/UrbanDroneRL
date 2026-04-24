@@ -542,7 +542,8 @@ class NavAviary(BaseRLAviary):
                     'speed': float(obstacle.speed),
                     'amplitude': float(obstacle.amplitude),
                     'frequency': float(obstacle.frequency),
-                    'direction': np.array(obstacle.direction, dtype=float).tolist()
+                    'direction': np.array(obstacle.direction, dtype=float).tolist(),
+                    'phase': float(getattr(obstacle, 'phase', 0.0))
                 })
             elif obstacle_type == 'WallObstacle':
                 specs.append({
@@ -628,10 +629,10 @@ class NavAviary(BaseRLAviary):
                     speed=spec['speed'],
                     amplitude=spec['amplitude'],
                     frequency=spec['frequency'],
-                    physics_client=self.CLIENT
+                    physics_client=self.CLIENT,
+                    direction=spec.get('direction'),
+                    phase=spec.get('phase', 0.0)
                 )
-                if 'direction' in spec:
-                    obstacle.direction = np.array(spec['direction'], dtype=float)
             elif obstacle_type == 'WallObstacle':
                 obstacle = WallObstacle(
                     position=np.array(spec['position'], dtype=float),
@@ -1367,7 +1368,9 @@ class NavAviary(BaseRLAviary):
             "out_of_bounds": bool(out_of_bounds),
             "start_pos": self.start_pos.tolist() if self.start_pos is not None else None,
             "goal_pos": self.goal_pos.tolist() if self.goal_pos is not None else None,
-            "final_pos": drone_pos.tolist()
+            "final_pos": drone_pos.tolist(),
+            "obstacle_type": getattr(self.scenario, "current_obstacle_type", getattr(self.scenario, "obstacle_type", None)),
+            "obstacle_count": len(getattr(self.scenario, "obstacles", []))
         }
 
         # Add debug metrics if enabled

@@ -8,6 +8,7 @@ import json
 import os
 import sys
 from typing import Any
+from collections import defaultdict
 
 import numpy as np
 from stable_baselines3 import PPO
@@ -115,7 +116,48 @@ def _summarize(records, timeout_near_goal_threshold: float):
             "min_goal_dist": float(np.mean(min_goal_dist)) if min_goal_dist else None
         }
     }
+
+    by_obstacle_type = {}
+    grouped = defaultdict(list)
+    for record in records:
+        grouped[record.get("obstacle_type") or "unknown"].append(record)
+    if len(grouped) > 1 or "unknown" not in grouped:
+        for obstacle_type, group_records in sorted(grouped.items()):
+            by_obstacle_type[obstacle_type] = _summarize_basic(group_records)
+    summary["by_obstacle_type"] = by_obstacle_type
     return summary
+
+
+def _summarize_basic(records):
+    total = len(records)
+    if total == 0:
+        return {
+            "episodes": 0,
+            "success_rate": 0.0,
+            "crash_rate": 0.0,
+            "timeout_rate": 0.0,
+            "crash_breakdown": {"out_of_bounds": 0, "contact": 0, "other": 0},
+            "mean_steps": None,
+            "mean_final_dist": None,
+        }
+
+    success = sum(1 for r in records if r["outcome"] == "success")
+    crash = sum(1 for r in records if r["outcome"] == "crash")
+    timeout = sum(1 for r in records if r["outcome"] == "timeout")
+    final_dist = [r["final_dist"] for r in records if r["final_dist"] is not None]
+    return {
+        "episodes": total,
+        "success_rate": float(success / total),
+        "crash_rate": float(crash / total),
+        "timeout_rate": float(timeout / total),
+        "crash_breakdown": {
+            "out_of_bounds": sum(1 for r in records if r["crash_reason"] == "out_of_bounds"),
+            "contact": sum(1 for r in records if r["crash_reason"] == "contact"),
+            "other": sum(1 for r in records if r["crash_reason"] == "other"),
+        },
+        "mean_steps": float(np.mean([r["steps"] for r in records])),
+        "mean_final_dist": float(np.mean(final_dist)) if final_dist else None,
+    }
 
 
 def main():
@@ -242,6 +284,8 @@ def main():
 
             record = {
                 "episode": int(episode_idx),
+                "obstacle_type": last_info.get("obstacle_type"),
+                "obstacle_count": last_info.get("obstacle_count"),
                 "outcome": outcome,
                 "crash_reason": crash_reason,
                 "steps": int(steps),
@@ -258,6 +302,7 @@ def main():
                 result_label = f"CRASH/{crash_reason}"
             print(
                 f"EP {episode_idx:03d} | {result_label:16s} | "
+                f"map={str(record['obstacle_type'] or 'unknown'):15s} | "
                 f"steps={steps:4d} | reward={ep_reward:9.2f} | "
                 f"final_dist={final_dist if final_dist is not None else float('nan'):.2f}"
             )
@@ -287,6 +332,17 @@ def main():
             f"Mean reward: {_fmt(summary['means']['reward'], '.2f')} | "
             f"Mean final dist: {_fmt(summary['means']['final_dist'], '.2f')}"
         )
+        if summary.get("by_obstacle_type"):
+            print("\nBy obstacle type:")
+            for obstacle_type, item in summary["by_obstacle_type"].items():
+                print(
+                    f"  {obstacle_type:15s} | n={item['episodes']:3d} | "
+                    f"S={item['success_rate']:.1%} | C={item['crash_rate']:.1%} | "
+                    f"contact={item['crash_breakdown']['contact']:3d} | "
+                    f"oob={item['crash_breakdown']['out_of_bounds']:3d} | "
+                    f"steps={_fmt(item['mean_steps'], '.1f')} | "
+                    f"final={_fmt(item['mean_final_dist'], '.2f')}"
+                )
 
         if args.json_out:
             output_payload = {

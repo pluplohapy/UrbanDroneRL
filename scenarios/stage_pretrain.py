@@ -30,13 +30,14 @@ class StagePretrainScenario(BaseScenario):
         """
         super().__init__(seed)
         self.obstacle_type = obstacle_type
+        self.current_obstacle_type = None
         self.config = load_config('pretrain')
         self.client_id = None
 
     def _resolve_obstacle_type(self) -> str:
         """Resolve obstacle mode into a concrete obstacle type."""
         if self.obstacle_type == 'random':
-            return self.rng.choice(list(self.config.OBSTACLE_TYPES.keys()))
+            return str(self.rng.choice(list(self.config.OBSTACLE_TYPES.keys())))
 
         if self.obstacle_type == 'dynamic_mix':
             dynamic_types = [
@@ -45,7 +46,15 @@ class StagePretrainScenario(BaseScenario):
             ]
             if not dynamic_types:
                 raise ValueError("No dynamic obstacle types configured for dynamic_mix mode")
-            return self.rng.choice(dynamic_types)
+
+            weights_config = getattr(self.config, "DYNAMIC_MIX_WEIGHTS", None)
+            if weights_config:
+                weights = np.array([float(weights_config.get(name, 0.0)) for name in dynamic_types], dtype=float)
+                if np.sum(weights) > 0.0:
+                    weights = weights / np.sum(weights)
+                    return str(self.rng.choice(dynamic_types, p=weights))
+
+            return str(self.rng.choice(dynamic_types))
 
         return self.obstacle_type
 
@@ -82,6 +91,7 @@ class StagePretrainScenario(BaseScenario):
 
         # Choose obstacle type
         chosen_type = self._resolve_obstacle_type()
+        self.current_obstacle_type = chosen_type
 
         # Generate obstacles of chosen type
         self._generate_obstacles(chosen_type, start_pos, goal_pos, client_id)
@@ -129,6 +139,7 @@ class StagePretrainScenario(BaseScenario):
         if obstacle_type not in self.config.OBSTACLE_TYPES:
             raise ValueError(f"Unknown obstacle type for pretrain scenario: {obstacle_type}")
 
+        self.current_obstacle_type = obstacle_type
         params = self.config.OBSTACLE_TYPES[obstacle_type]
         n_obstacles = self.rng.randint(params['count'][0], params['count'][1] + 1)
 
@@ -320,21 +331,47 @@ class StagePretrainScenario(BaseScenario):
     def _generate_spheres(self, n_obstacles: int, params: dict,
                          start_pos: np.ndarray, goal_pos: np.ndarray, client_id: int):
         """Generate spherical obstacles (birds)."""
+        half_x = self.config.ARENA_SIZE_X / 2.0
+        half_y = self.config.ARENA_SIZE_Y / 2.0
+        start_goal_clearance = float(getattr(self.config, "DYNAMIC_START_GOAL_CLEARANCE", 1.1))
+
         for _ in range(n_obstacles):
             radius = self.rng.uniform(*params['radius'])
             speed = self.rng.uniform(*params['speed'])
             amplitude = self.rng.uniform(*self.config.SPHERE_MOVEMENT_AMPLITUDE)
             frequency = self.rng.uniform(*self.config.SPHERE_MOVEMENT_FREQUENCY)
+            phase = self.rng.uniform(0.0, 2.0 * np.pi)
+            angle = self.rng.uniform(0.0, 2.0 * np.pi)
+            direction = np.array([np.cos(angle), np.sin(angle), 0.0])
+            sweep_radius = radius + amplitude
 
             # Find valid position
-            for _ in range(50):
-                x = self.rng.uniform(-self.config.ARENA_SIZE_X/2 + 2, self.config.ARENA_SIZE_X/2 - 2)
-                y = self.rng.uniform(-self.config.ARENA_SIZE_Y/2 + 2, self.config.ARENA_SIZE_Y/2 - 2)
-                z = self.rng.uniform(1.0, self.config.ARENA_HEIGHT - 1.0)
+            for _ in range(80):
+                x_min = -half_x + sweep_radius + 0.15
+                x_max = half_x - sweep_radius - 0.15
+                y_min = -half_y + start_goal_clearance + sweep_radius
+                y_max = half_y - start_goal_clearance - sweep_radius
+                if x_min > x_max:
+                    x_min = x_max = 0.0
+                if y_min > y_max:
+                    continue
+
+                x = self.rng.uniform(x_min, x_max)
+                y = self.rng.uniform(y_min, y_max)
+                z = self.rng.uniform(0.9, self.config.ARENA_HEIGHT - 0.8)
                 pos = np.array([x, y, z])
 
-                if self._is_valid_position(pos, radius + amplitude, start_pos, goal_pos):
-                    obstacle = SphereObstacle(pos, radius, speed, amplitude, frequency, client_id)
+                if self._is_valid_position(pos, sweep_radius, start_pos, goal_pos):
+                    obstacle = SphereObstacle(
+                        pos,
+                        radius,
+                        speed,
+                        amplitude,
+                        frequency,
+                        client_id,
+                        direction=direction,
+                        phase=phase,
+                    )
                     self.obstacles.append(obstacle)
                     break
 

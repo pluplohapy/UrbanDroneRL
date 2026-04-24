@@ -58,12 +58,20 @@ CYLINDER_PATH_GRID_RESOLUTION = 0.20
 # and preserve a practical low passage under moving bars.
 DYNAMIC_START_GOAL_CLEARANCE = 1.1
 BEAM_PAIR_Y_CLEARANCE = 0.9
-BEAM_BOTTOM_GAP = 0.45
+BEAM_BOTTOM_GAP = 0.85
 BEAM_CEILING_GAP = 0.25
 STICK_PAIR_Y_CLEARANCE = 0.65
-STICK_BOTTOM_GAP_FRACTION = 1.0 / 3.0
+STICK_BOTTOM_GAP_FRACTION = 0.42
 STICK_CEILING_GAP = 0.25
 STICK_SIDE_MARGIN = 0.15
+
+# Dynamic mix curriculum weights. Spheres are frequent enough to train moving
+# obstacle timing, while beams/sticks still cover vertical avoidance.
+DYNAMIC_MIX_WEIGHTS = {
+    'spheres': 0.35,
+    'beams': 0.35,
+    'swinging_sticks': 0.30,
+}
 
 # ===== OBSTACLE TYPES CONFIGURATION =====
 OBSTACLE_TYPES = {
@@ -83,9 +91,9 @@ OBSTACLE_TYPES = {
 
     'spheres': {
         'name': 'Сферы (птицы)',
-        'count': (3, 5),  # x1.5 количество (было 2-3)
-        'radius': (0.225, 0.375),  # x1.5 размер (было 0.15-0.25)
-        'speed': (0.3, 0.8),
+        'count': (3, 5),
+        'radius': (0.18, 0.30),
+        'speed': (0.25, 0.55),
         'dynamic': True,
         'movement': 'sinusoidal'
     },
@@ -101,12 +109,12 @@ OBSTACLE_TYPES = {
 
     'beams': {
         'name': 'Вертикально качающиеся балки',
-        'count': (4, 6),
-        'length': (1.2, 2.2),
-        'height': (1.15, 2.15),
+        'count': (4, 5),
+        'length': (1.0, 1.8),
+        'height': (1.35, 2.15),
         'thickness': 0.18,
         'dynamic': True,
-        'swing_angle': 45,
+        'swing_angle': 35,
         'swing_period': (3.0, 5.0),
         'swing_axis': 'pitch'
     },
@@ -121,19 +129,19 @@ OBSTACLE_TYPES = {
 
     'swinging_sticks': {
         'name': 'Качающиеся палки (ветки)',
-        'count': (5, 8),
-        'length': (2.6, 3.7),
+        'count': (4, 6),
+        'length': (2.2, 3.3),
         'thickness': 0.12,
         'swing_angle': 25,
         'swing_period': (5.0, 9.0),
         'dynamic': True,
         'vertical_swing': True,
-        'vertical_amplitude': (0.25, 0.65)
+        'vertical_amplitude': (0.15, 0.40)
     }
 }
 
 # ===== DYNAMIC OBSTACLES PARAMETERS =====
-SPHERE_MOVEMENT_AMPLITUDE = (0.5, 1.2)  # Smaller amplitude for narrow corridor
-SPHERE_MOVEMENT_FREQUENCY = (0.3, 0.8)
+SPHERE_MOVEMENT_AMPLITUDE = (0.35, 0.85)
+SPHERE_MOVEMENT_FREQUENCY = (0.12, 0.28)
 BEAM_SWING_SPEED = 0.5
 STICK_SWING_SPEED = 0.8

@@ -57,7 +57,17 @@ class CylinderObstacle:
 class SphereObstacle:
     """Spherical obstacle with sinusoidal movement (птица)."""
 
-    def __init__(self, position, radius, speed, amplitude, frequency, physics_client):
+    def __init__(
+        self,
+        position,
+        radius,
+        speed,
+        amplitude,
+        frequency,
+        physics_client,
+        direction=None,
+        phase=0.0
+    ):
         self.initial_position = np.array(position)
         self.position = np.array(position)
         self.radius = radius
@@ -67,10 +77,20 @@ class SphereObstacle:
         self.client = physics_client
         self.dynamic = True
         self.time = 0.0
+        self.phase = phase
+        self.angular_frequency = min(2 * np.pi * frequency, speed / max(amplitude, 1e-6))
 
-        # Random movement direction
-        angle = np.random.uniform(0, 2 * np.pi)
-        self.direction = np.array([np.cos(angle), np.sin(angle), 0])
+        if direction is None:
+            angle = np.random.uniform(0, 2 * np.pi)
+            self.direction = np.array([np.cos(angle), np.sin(angle), 0])
+        else:
+            direction = np.array(direction, dtype=float)
+            norm = np.linalg.norm(direction)
+            if norm < 1e-6:
+                direction = np.array([1.0, 0.0, 0.0])
+            else:
+                direction = direction / norm
+            self.direction = direction
 
         # Create collision shape
         collision_shape = p.createCollisionShape(
@@ -104,7 +124,7 @@ class SphereObstacle:
         self.time += dt
 
         # Sinusoidal offset
-        offset = self.amplitude * np.sin(2 * np.pi * self.frequency * self.time)
+        offset = self.amplitude * np.sin(self.angular_frequency * self.time + self.phase)
 
         # Update position
         self.position = self.initial_position + self.direction * offset

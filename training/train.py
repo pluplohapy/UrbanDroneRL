@@ -334,6 +334,7 @@ class TrainingDiagnosticsLogger:
         hovering_time = self._safe_float(info.get("hovering_time"))
         spinning_time = self._safe_float(info.get("spinning_time"))
         goal_seeking_ratio = self._safe_float(info.get("goal_seeking_ratio"))
+        obstacle_type = info.get("obstacle_type")
 
         progress_ratio = None
         if start_distance is not None and start_distance > 1e-6 and dist_to_goal is not None:
@@ -343,6 +344,8 @@ class TrainingDiagnosticsLogger:
             "episode": int(episode_idx),
             "timesteps": int(timesteps),
             "outcome": outcome,
+            "obstacle_type": str(obstacle_type) if obstacle_type is not None else None,
+            "obstacle_count": info.get("obstacle_count"),
             "episode_reward": episode_reward,
             "episode_length": episode_length,
             "dist_to_goal": dist_to_goal,
