@@ -5,7 +5,6 @@ Shows the drone flying in PyBullet GUI.
 
 import numpy as np
 import time
-import importlib
 import os
 import sys
 import pybullet as p
@@ -21,6 +20,7 @@ from scenarios.stage1_static import Stage1Scenario
 from scenarios.stage_pretrain import StagePretrainScenario
 from envs.visualization_utils import draw_arena_boundaries, draw_goal_marker
 from config import load_config
+from config.runtime_sync import sync_runtime_config
 
 
 def visualize_flight(model_path="models/ppo_drone_nav_test",
@@ -52,9 +52,11 @@ def visualize_flight(model_path="models/ppo_drone_nav_test",
     if watch_fps <= 0:
         raise ValueError("watch_fps must be > 0")
 
+    stage_key = 'pretrain' if stage == 'pretrain' else str(stage)
+    stage_config = load_config(stage_key)
     # Shield mode for visualization can be controlled independently from training defaults.
-    runtime_config = importlib.import_module("config")
-    runtime_config.SAFETY_SHIELD_ENABLED = bool(safety_shield)
+    stage_config.SAFETY_SHIELD_ENABLED = bool(safety_shield)
+    sync_runtime_config(stage_config)
 
     # Create environment with GUI FIRST
     print("\n[SETUP] Creating visualization environment...")
@@ -113,14 +115,6 @@ def visualize_flight(model_path="models/ppo_drone_nav_test",
 
         print(f"\nEpisode {episode + 1}/{n_episodes}")
         print("-" * 60)
-
-        # Get config for current stage
-        if stage == 'pretrain':
-            stage_config = load_config('pretrain')
-        elif stage == 1:
-            stage_config = load_config('1')
-        else:
-            stage_config = load_config('0')
 
         # Draw arena boundaries with correct size
         draw_arena_boundaries(
@@ -293,6 +287,7 @@ if __name__ == "__main__":
     parser.add_argument("--stage", type=str, default="0",
                         help="Stage: 0=empty, 1=static obstacles, pretrain=pretrain")
     parser.add_argument("--obstacle-type", type=str, default="random",
+                        choices=["random", "dynamic_mix", "empty", "cylinders", "spheres", "walls", "beams", "boxes", "swinging_sticks"],
                         help="Obstacle type for pretrain stage")
     parser.add_argument("--watch-fps", type=float, default=60.0,
                         help="Target GUI FPS (same as train --watch-fps)")

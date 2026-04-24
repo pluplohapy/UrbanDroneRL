@@ -24,6 +24,7 @@ class StagePretrainScenario(BaseScenario):
         Args:
             obstacle_type: Type of obstacles to generate
                           'random' - random type each reset (includes empty)
+                          'dynamic_mix' - random dynamic type each reset
                           'empty', 'cylinders', 'spheres', 'walls', 'beams', 'boxes', 'swinging_sticks' - specific type
             seed: Random seed for reproducibility
         """
@@ -31,6 +32,22 @@ class StagePretrainScenario(BaseScenario):
         self.obstacle_type = obstacle_type
         self.config = load_config('pretrain')
         self.client_id = None
+
+    def _resolve_obstacle_type(self) -> str:
+        """Resolve obstacle mode into a concrete obstacle type."""
+        if self.obstacle_type == 'random':
+            return self.rng.choice(list(self.config.OBSTACLE_TYPES.keys()))
+
+        if self.obstacle_type == 'dynamic_mix':
+            dynamic_types = [
+                name for name, params in self.config.OBSTACLE_TYPES.items()
+                if bool(params.get('dynamic', False))
+            ]
+            if not dynamic_types:
+                raise ValueError("No dynamic obstacle types configured for dynamic_mix mode")
+            return self.rng.choice(dynamic_types)
+
+        return self.obstacle_type
 
     def generate(self, client_id):
         """
@@ -64,10 +81,7 @@ class StagePretrainScenario(BaseScenario):
         start_pos, goal_pos = self._generate_start_goal_zones()
 
         # Choose obstacle type
-        if self.obstacle_type == 'random':
-            chosen_type = self.rng.choice(list(self.config.OBSTACLE_TYPES.keys()))
-        else:
-            chosen_type = self.obstacle_type
+        chosen_type = self._resolve_obstacle_type()
 
         # Generate obstacles of chosen type
         self._generate_obstacles(chosen_type, start_pos, goal_pos, client_id)
@@ -112,6 +126,9 @@ class StagePretrainScenario(BaseScenario):
             goal_pos: Goal position
             client_id: PyBullet client ID
         """
+        if obstacle_type not in self.config.OBSTACLE_TYPES:
+            raise ValueError(f"Unknown obstacle type for pretrain scenario: {obstacle_type}")
+
         params = self.config.OBSTACLE_TYPES[obstacle_type]
         n_obstacles = self.rng.randint(params['count'][0], params['count'][1] + 1)
 

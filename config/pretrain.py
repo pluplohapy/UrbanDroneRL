@@ -25,6 +25,25 @@ GOAL_ZONE_Z = (0.8, 1.5)     # Lower height
 # ===== NO PLANNER FOR PRETRAIN =====
 USE_PLANNER = False
 
+# ===== PPO STABILITY TUNING (PRETRAIN ONLY) =====
+# Copy base params and override only pretrain-specific settings.
+PPO_PARAMS = {
+    **PPO_PARAMS,
+    "learning_rate": 5e-5,
+    "target_kl": 0.02,
+}
+
+# ===== TERMINAL APPROACH + BOUNDARY STABILITY =====
+# Reduce overshoot near the goal and reduce OOB exits near arena borders.
+GOAL_VEL_SOFT_RADIUS = 1.4
+GOAL_VEL_MIN_SCALE = 0.2
+BOUNDARY_VEL_SOFT_MARGIN = 1.2
+BOUNDARY_VEL_MIN_SCALE = 0.0
+
+# Mildly stronger regularization against spinning/jerk in dense maps.
+REWARD_YAW_PENALTY_SCALE = 10.0
+REWARD_ACTION_SMOOTHNESS_SCALE = 0.7
+
 # ===== CYLINDER MAP QUALITY (ANTI-DEAD-END) =====
 # Keep cylinders away from borders and from each other, and require a
 # feasible XY corridor from start to goal during sampling.

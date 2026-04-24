@@ -16,16 +16,16 @@ import sys
 import argparse
 import json
 import heapq
-import importlib
 import numpy as np
 import torch
 import warnings
 from datetime import datetime
 from collections import Counter, deque
 from stable_baselines3 import PPO
-from stable_baselines3.common.vec_env import SubprocVecEnv, VecNormalize, DummyVecEnv
+from stable_baselines3.common.vec_env import SubprocVecEnv, VecNormalize, DummyVecEnv, sync_envs_normalization
 from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.monitor import Monitor
+from stable_baselines3.common.utils import get_schedule_fn
 
 # Suppress warnings
 warnings.filterwarnings('ignore')
@@ -39,6 +39,7 @@ from envs.nav_aviary_planner import NavAviaryWithPlanner
 from scenarios.stage0_empty import Stage0Scenario
 from scenarios.stage1_static import Stage1Scenario
 from config import load_config
+from config.runtime_sync import sync_runtime_config
 
 
 class TrainingDiagnosticsLogger:
@@ -817,6 +818,153 @@ class ProgressCallback(BaseCallback):
         print()  # Empty line for readability
 
 
+class SuccessRateEvalCallback(BaseCallback):
+    """
+    Periodic evaluation callback.
+    Best checkpoint criterion: higher success_rate, then higher mean_reward.
+    """
+
+    def __init__(
+        self,
+        eval_env,
+        best_model_save_path: str,
+        log_path: str,
+        eval_freq: int = 10_000,
+        n_eval_episodes: int = 20,
+        deterministic: bool = True,
+        verbose: int = 1,
+    ):
+        super().__init__(verbose=verbose)
+        self.eval_env = eval_env
+        self.best_model_save_path = best_model_save_path
+        self.log_path = log_path
+        self.eval_freq = max(1, int(eval_freq))
+        self.n_eval_episodes = max(1, int(n_eval_episodes))
+        self.deterministic = bool(deterministic)
+        self.best_success_rate = -np.inf
+        self.best_mean_reward = -np.inf
+        self.eval_history_path = os.path.join(self.log_path, "eval_history.jsonl")
+
+        os.makedirs(self.best_model_save_path, exist_ok=True)
+        os.makedirs(self.log_path, exist_ok=True)
+
+    def _on_step(self) -> bool:
+        if self.n_calls % self.eval_freq != 0:
+            return True
+
+        if isinstance(self.training_env, VecNormalize):
+            try:
+                sync_envs_normalization(self.training_env, self.eval_env)
+            except Exception as exc:
+                if self.verbose >= 1:
+                    print(f"[EVAL][WARN] Could not sync VecNormalize stats: {exc}")
+
+        rewards = []
+        lengths = []
+        outcomes = []
+        crash_oob = 0
+        crash_contact = 0
+
+        for _ in range(self.n_eval_episodes):
+            obs = self.eval_env.reset()
+            done = False
+            ep_reward = 0.0
+            ep_len = 0
+            last_info = {}
+
+            while not done:
+                action, _ = self.model.predict(obs, deterministic=self.deterministic)
+                step_result = self.eval_env.step(action)
+
+                if len(step_result) == 5:
+                    obs, reward, terminated, truncated, info = step_result
+                    done = bool(terminated[0] or truncated[0])
+                else:
+                    obs, reward, done_vec, info = step_result
+                    done = bool(done_vec[0])
+
+                ep_reward += float(reward[0])
+                ep_len += 1
+                if info and len(info) > 0:
+                    last_info = info[0]
+
+            is_success = bool(last_info.get("is_success", False))
+            is_crash = bool(last_info.get("is_crash", False))
+            out_of_bounds = bool(last_info.get("out_of_bounds", False))
+            has_contact = bool(last_info.get("has_contact", False))
+
+            if is_success:
+                outcome = "success"
+            elif is_crash or out_of_bounds:
+                outcome = "crash"
+                if out_of_bounds:
+                    crash_oob += 1
+                elif has_contact:
+                    crash_contact += 1
+            else:
+                outcome = "timeout"
+
+            rewards.append(ep_reward)
+            lengths.append(ep_len)
+            outcomes.append(outcome)
+
+        mean_reward = float(np.mean(rewards)) if rewards else 0.0
+        mean_ep_length = float(np.mean(lengths)) if lengths else 0.0
+        success_rate = float(np.mean([1.0 if o == "success" else 0.0 for o in outcomes])) if outcomes else 0.0
+        crash_rate = float(np.mean([1.0 if o == "crash" else 0.0 for o in outcomes])) if outcomes else 0.0
+        timeout_rate = float(np.mean([1.0 if o == "timeout" else 0.0 for o in outcomes])) if outcomes else 0.0
+
+        self.logger.record("eval/mean_reward", mean_reward)
+        self.logger.record("eval/mean_ep_length", mean_ep_length)
+        self.logger.record("eval/success_rate", success_rate)
+        self.logger.record("eval/crash_rate", crash_rate)
+        self.logger.record("eval/timeout_rate", timeout_rate)
+        self.logger.record("time/total_timesteps", self.num_timesteps)
+        self.logger.dump(self.num_timesteps)
+
+        eval_row = {
+            "timesteps": int(self.num_timesteps),
+            "mean_reward": mean_reward,
+            "mean_ep_length": mean_ep_length,
+            "success_rate": success_rate,
+            "crash_rate": crash_rate,
+            "timeout_rate": timeout_rate,
+            "crash_out_of_bounds": int(crash_oob),
+            "crash_contact": int(crash_contact),
+            "episodes": int(self.n_eval_episodes),
+            "deterministic": bool(self.deterministic),
+        }
+        with open(self.eval_history_path, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(eval_row, ensure_ascii=False) + "\n")
+
+        is_better = (
+            success_rate > self.best_success_rate + 1e-12
+            or (
+                abs(success_rate - self.best_success_rate) <= 1e-12
+                and mean_reward > self.best_mean_reward + 1e-9
+            )
+        )
+        if is_better:
+            self.best_success_rate = success_rate
+            self.best_mean_reward = mean_reward
+            self.model.save(os.path.join(self.best_model_save_path, "best_model"))
+            if isinstance(self.training_env, VecNormalize):
+                self.training_env.save(os.path.join(self.best_model_save_path, "best_model_vecnormalize.pkl"))
+            if self.verbose >= 1:
+                print("New best checkpoint by success_rate!")
+                print(
+                    f"[EVAL] steps={self.num_timesteps} | success={success_rate:.1%} | "
+                    f"reward={mean_reward:.2f} | len={mean_ep_length:.1f}"
+                )
+        elif self.verbose >= 1:
+            print(
+                f"[EVAL] steps={self.num_timesteps} | success={success_rate:.1%} | "
+                f"reward={mean_reward:.2f} | len={mean_ep_length:.1f}"
+            )
+
+        return True
+
+
 def make_env_stage0(rank, seed=0, use_planner=True, config=None, gui=False, watch_fps=None,
                     fixed_map=False, show_paths=False, swarm_drones=1):
     """Create Stage 0 environment (empty arena)."""
@@ -923,13 +1071,54 @@ def make_env_pretrain(rank, seed=0, obstacle_type='random', config=None, gui=Fal
     return _init
 
 
+def apply_loaded_model_hyperparams(model, ppo_params):
+    """
+    Apply a safe subset of PPO hyperparameters after loading a checkpoint.
+    This keeps continued training aligned with current config values.
+    """
+    if not isinstance(ppo_params, dict):
+        return []
+
+    applied = []
+
+    if "learning_rate" in ppo_params:
+        lr = float(ppo_params["learning_rate"])
+        model.learning_rate = lr
+        model.lr_schedule = get_schedule_fn(lr)
+        for group in model.policy.optimizer.param_groups:
+            group["lr"] = lr
+        applied.append(f"learning_rate={lr:g}")
+
+    if "target_kl" in ppo_params:
+        model.target_kl = float(ppo_params["target_kl"])
+        applied.append(f"target_kl={float(ppo_params['target_kl']):g}")
+
+    if "clip_range" in ppo_params:
+        model.clip_range = get_schedule_fn(float(ppo_params["clip_range"]))
+        applied.append(f"clip_range={float(ppo_params['clip_range']):g}")
+
+    if "ent_coef" in ppo_params:
+        model.ent_coef = float(ppo_params["ent_coef"])
+        applied.append(f"ent_coef={float(ppo_params['ent_coef']):g}")
+
+    if "vf_coef" in ppo_params:
+        model.vf_coef = float(ppo_params["vf_coef"])
+        applied.append(f"vf_coef={float(ppo_params['vf_coef']):g}")
+
+    if "max_grad_norm" in ppo_params:
+        model.max_grad_norm = float(ppo_params["max_grad_norm"])
+        applied.append(f"max_grad_norm={float(ppo_params['max_grad_norm']):g}")
+
+    return applied
+
+
 def main():
     parser = argparse.ArgumentParser(description='Train drone navigation')
     parser.add_argument('--stage', type=str, required=True, choices=['0', '1', 'pretrain'],
                         help='Training stage: 0 (empty), 1 (obstacles), pretrain (diverse)')
     parser.add_argument('--obstacle-type', type=str, default='random',
-                        choices=['random', 'empty', 'cylinders', 'spheres', 'walls', 'beams', 'boxes', 'swinging_sticks'],
-                        help='Obstacle type for pretrain stage (default: random, includes empty)')
+                        choices=['random', 'dynamic_mix', 'empty', 'cylinders', 'spheres', 'walls', 'beams', 'boxes', 'swinging_sticks'],
+                        help='Obstacle type for pretrain stage (random, dynamic_mix, or specific type)')
     parser.add_argument('--no-planner', action='store_true',
                         help='Disable RRT* planner (enabled by default for stage 0/1, always disabled for pretrain)')
     parser.add_argument('--timesteps', type=int, default=None,
@@ -938,6 +1127,10 @@ def main():
                         help='Number of parallel environments (default: from config)')
     parser.add_argument('--continue', dest='continue_training', action='store_true',
                         help='Continue training from checkpoint')
+    parser.add_argument('--init-model', type=str, default=None,
+                        help='Optional checkpoint .zip path to initialize/continue from')
+    parser.add_argument('--init-normalize', type=str, default=None,
+                        help='Optional VecNormalize .pkl path for --init-model')
     parser.add_argument('--debug', action='store_true',
                         help='Enable debug mode (detailed logging and metrics)')
     parser.add_argument('--watch', action='store_true',
@@ -968,23 +1161,38 @@ def main():
                         help='Rolling window size for milestone snapshots')
     parser.add_argument('--diag-bad-topk', type=int, default=300,
                         help='Keep top-K worst failure episodes in diagnostics')
-    parser.set_defaults(diag=True, safety_shield=None)
+    parser.add_argument('--eval', dest='eval_enabled', action='store_true',
+                        help='Enable periodic evaluation and best-checkpoint saving (default)')
+    parser.add_argument('--no-eval', dest='eval_enabled', action='store_false',
+                        help='Disable periodic evaluation and best-checkpoint saving')
+    parser.add_argument('--eval-freq', type=int, default=50_000,
+                        help='Evaluation frequency in environment steps (default: 50000)')
+    parser.add_argument('--eval-episodes', type=int, default=20,
+                        help='Number of episodes per evaluation pass (default: 20)')
+    parser.add_argument('--eval-seed', type=int, default=12345,
+                        help='Base seed for evaluation environment (default: 12345)')
+    parser.add_argument('--eval-deterministic', dest='eval_deterministic', action='store_true',
+                        help='Use deterministic policy during periodic eval (default)')
+    parser.add_argument('--eval-stochastic', dest='eval_deterministic', action='store_false',
+                        help='Use stochastic policy during periodic eval')
+    parser.set_defaults(diag=True, safety_shield=None, eval_enabled=True, eval_deterministic=True)
 
     args = parser.parse_args()
 
     # Load config for the specified stage
     config = load_config(args.stage)
-    runtime_config = importlib.import_module("config")
 
     # Safety shield toggle (training-friendly default: disabled unless explicitly enabled)
     if args.safety_shield is not None:
         config.SAFETY_SHIELD_ENABLED = bool(args.safety_shield)
-    runtime_config.SAFETY_SHIELD_ENABLED = bool(getattr(config, "SAFETY_SHIELD_ENABLED", False))
 
     # Enable debug mode if requested
     if args.debug:
         config.DEBUG_MODE = True
         print("[DEBUG] Debug mode enabled")
+
+    # Critical: keep env runtime module aligned with stage-specific config values.
+    sync_runtime_config(config)
 
     # Determine configuration
     stage = args.stage
@@ -1010,6 +1218,10 @@ def main():
         parser.error("--diag-window must be >= 10")
     if args.diag_bad_topk < 10:
         parser.error("--diag-bad-topk must be >= 10")
+    if args.eval_freq < 1:
+        parser.error("--eval-freq must be >= 1")
+    if args.eval_episodes < 1:
+        parser.error("--eval-episodes must be >= 1")
 
     if swarm_drones > 1:
         if use_planner:
@@ -1096,6 +1308,11 @@ def main():
     print(f"  Show paths: {show_paths}")
     print(f"  Swarm drones: {swarm_drones}")
     print(f"  Diagnostics logs: {args.diag}")
+    print(f"  Periodic eval: {args.eval_enabled}")
+    if args.eval_enabled:
+        print(f"  Eval frequency: {args.eval_freq:,} env steps")
+        print(f"  Eval episodes: {args.eval_episodes}")
+        print(f"  Eval deterministic: {args.eval_deterministic}")
     print(f"  Safety shield: {bool(getattr(config, 'SAFETY_SHIELD_ENABLED', False))}")
     if watch_mode:
         print(f"  Watch FPS: {args.watch_fps}")
@@ -1123,11 +1340,17 @@ def main():
 
     # Check for checkpoints
     checkpoint_exists = os.path.exists(f"{model_path}.zip") and os.path.exists(normalize_path)
+    checkpoint_model_path = args.init_model if args.init_model else f"{model_path}.zip"
+    checkpoint_normalize_path = args.init_normalize if args.init_normalize else normalize_path
+
+    if args.continue_training:
+        print(f"  Continue from model: {checkpoint_model_path}")
+        print(f"  Continue from normalize: {checkpoint_normalize_path}")
 
     # Check for transfer learning (Stage 0 -> Stage 1)
     stage0_model = "models/ppo_drone_nav_stage0_planner.zip"
     stage0_normalize = "models/vec_normalize_stage0_planner.pkl"
-    can_transfer = (stage == 1) and os.path.exists(stage0_model) and os.path.exists(stage0_normalize)
+    can_transfer = (stage == '1') and os.path.exists(stage0_model) and os.path.exists(stage0_normalize)
 
     np.random.seed(config.SEED)
     torch.manual_seed(config.SEED)
@@ -1163,18 +1386,27 @@ def main():
         vec_env = SubprocVecEnv(env_fns)
 
     # Load or create model
-    if args.continue_training and checkpoint_exists:
+    if args.continue_training:
+        if not (os.path.exists(checkpoint_model_path) and os.path.exists(checkpoint_normalize_path)):
+            parser.error(
+                "Requested --continue but checkpoint files are missing: "
+                f"model={checkpoint_model_path}, normalize={checkpoint_normalize_path}"
+            )
+
         print(f"\n[LOAD] Continuing training from checkpoint...")
-        vec_env = VecNormalize.load(normalize_path, vec_env)
+        vec_env = VecNormalize.load(checkpoint_normalize_path, vec_env)
         vec_env.training = True
         vec_env.norm_reward = True
         print("✓ VecNormalize stats loaded")
 
-        model = PPO.load(f"{model_path}.zip", env=vec_env)
+        model = PPO.load(checkpoint_model_path, env=vec_env)
         print("✓ Model loaded")
+        updated = apply_loaded_model_hyperparams(model, config.PPO_PARAMS)
+        if updated:
+            print("✓ Applied PPO overrides for continued training: " + ", ".join(updated))
         print(f"\nStarting from {model.num_timesteps} steps")
 
-    elif stage == 1 and can_transfer and not checkpoint_exists:
+    elif stage == '1' and can_transfer and not checkpoint_exists:
         print(f"\n[LOAD] Using Stage 0 model for transfer learning...")
         vec_env = VecNormalize.load(stage0_normalize, vec_env)
         vec_env.training = True
@@ -1183,6 +1415,9 @@ def main():
 
         model = PPO.load(stage0_model, env=vec_env)
         print("✓ Stage 0 model loaded for transfer learning")
+        updated = apply_loaded_model_hyperparams(model, config.PPO_PARAMS)
+        if updated:
+            print("✓ Applied PPO overrides for transfer training: " + ", ".join(updated))
         print(f"\nStarting from {model.num_timesteps} steps")
 
     else:
@@ -1224,7 +1459,14 @@ def main():
             "safety_shield_enabled": bool(getattr(config, "SAFETY_SHIELD_ENABLED", False)),
             "obstacle_type": args.obstacle_type if stage == "pretrain" else None,
             "continue_training": bool(args.continue_training),
-            "timesteps_target": int(timesteps)
+            "init_model": checkpoint_model_path if args.continue_training else None,
+            "init_normalize": checkpoint_normalize_path if args.continue_training else None,
+            "timesteps_target": int(timesteps),
+            "eval_enabled": bool(args.eval_enabled),
+            "eval_freq_env_steps": int(args.eval_freq),
+            "eval_episodes": int(args.eval_episodes),
+            "eval_seed": int(args.eval_seed),
+            "eval_deterministic": bool(args.eval_deterministic)
         }
     )
     if args.diag and diag_logger.run_dir is not None:
@@ -1236,6 +1478,85 @@ def main():
         config=config,
         diag_logger=diag_logger
     )
+    callbacks = [progress_callback]
+
+    eval_env = None
+    eval_callback = None
+    best_model_dir = os.path.join("models", "best_checkpoints", log_name)
+    best_model_path = os.path.join(best_model_dir, "best_model.zip")
+    eval_log_dir = os.path.join("logs", "eval", log_name)
+
+    if args.eval_enabled:
+        print("\n[EVAL] Setting up periodic evaluation...")
+        eval_seed = int(args.eval_seed)
+
+        if stage == '0':
+            eval_env_fn = make_env_stage0(
+                rank=0,
+                seed=eval_seed,
+                use_planner=use_planner,
+                config=config,
+                gui=False,
+                watch_fps=None,
+                fixed_map=False,
+                show_paths=False,
+                swarm_drones=1
+            )
+        elif stage == '1':
+            eval_env_fn = make_env_stage1(
+                rank=0,
+                seed=eval_seed,
+                use_planner=use_planner,
+                config=config,
+                gui=False,
+                watch_fps=None,
+                fixed_map=False,
+                show_paths=False,
+                swarm_drones=1
+            )
+        else:
+            eval_env_fn = make_env_pretrain(
+                rank=0,
+                seed=eval_seed,
+                obstacle_type=args.obstacle_type,
+                config=config,
+                gui=False,
+                watch_fps=None,
+                fixed_map=False,
+                show_paths=False,
+                swarm_drones=1
+            )
+
+        eval_env = DummyVecEnv([eval_env_fn])
+        eval_env = VecNormalize(
+            eval_env,
+            norm_obs=True,
+            norm_reward=False,
+            clip_obs=float(getattr(vec_env, "clip_obs", 10.0)),
+            clip_reward=10.0
+        )
+        eval_env.training = False
+        eval_env.norm_reward = False
+
+        os.makedirs(best_model_dir, exist_ok=True)
+        os.makedirs(eval_log_dir, exist_ok=True)
+        eval_freq_rollouts = max(args.eval_freq // n_envs, 1)
+
+        eval_callback = SuccessRateEvalCallback(
+            eval_env=eval_env,
+            best_model_save_path=best_model_dir,
+            log_path=eval_log_dir,
+            eval_freq=eval_freq_rollouts,
+            n_eval_episodes=args.eval_episodes,
+            deterministic=args.eval_deterministic,
+            verbose=1
+        )
+        callbacks.append(eval_callback)
+
+        print(f"✓ Eval env ready (seed={eval_seed})")
+        print(f"✓ Eval callback frequency: every {eval_freq_rollouts} rollout steps (~{args.eval_freq:,} env steps)")
+        print(f"✓ Best model path: {best_model_path}")
+        print("✓ Best-checkpoint criterion: success_rate (tie-break: mean_reward)")
 
     print(f"\n[TRAINING] Starting training...")
     print("-" * 60)
@@ -1243,7 +1564,7 @@ def main():
     try:
         model.learn(
             total_timesteps=timesteps,
-            callback=progress_callback,
+            callback=callbacks,
             progress_bar=False,
             reset_num_timesteps=False,
             tb_log_name=log_name
@@ -1260,10 +1581,17 @@ def main():
     vec_env.save(normalize_path)
     print(f"✓ Model saved to {model_path}.zip")
     print(f"✓ Normalization saved to {normalize_path}")
+    if args.eval_enabled:
+        if os.path.exists(best_model_path):
+            print(f"✓ Best eval model saved to {best_model_path}")
+        else:
+            print("⚠ Periodic eval was enabled, but best_model.zip was not produced")
 
     if diag_logger is not None:
         diag_logger.close()
 
+    if eval_env is not None:
+        eval_env.close()
     vec_env.close()
 
     print("\n" + "=" * 60)

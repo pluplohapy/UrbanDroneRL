@@ -199,7 +199,7 @@ def main():
                        choices=['0', '1', 'pretrain'],
                        help='Stage to preview')
     parser.add_argument('--obstacle-type', type=str, default='random',
-                       choices=['random', 'cylinders', 'spheres', 'walls',
+                       choices=['random', 'dynamic_mix', 'cylinders', 'spheres', 'walls',
                                'beams', 'boxes', 'swinging_sticks'],
                        help='Obstacle type for pretrain stage')
     parser.add_argument('--duration', type=int, default=5,
