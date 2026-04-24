@@ -14,6 +14,11 @@ import numpy as np
 from stable_baselines3 import PPO
 from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
 
+try:
+    from sb3_contrib import RecurrentPPO
+except ImportError:
+    RecurrentPPO = None
+
 # Add project root to path to support `python training/evaluate.py`.
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -24,6 +29,36 @@ from scenarios.stage1_static import Stage1Scenario
 from scenarios.stage_pretrain import StagePretrainScenario
 from config import load_config
 from config.runtime_sync import sync_runtime_config
+
+
+ALGO_CHOICES = ("ppo", "recurrent_ppo")
+
+
+def get_algorithm_class(algo: str):
+    if algo == "ppo":
+        return PPO
+    if algo == "recurrent_ppo":
+        if RecurrentPPO is None:
+            raise ImportError(
+                "RecurrentPPO requires sb3-contrib. Install it with: pip install sb3-contrib"
+            )
+        return RecurrentPPO
+    raise ValueError(f"Unknown algorithm: {algo}")
+
+
+def predict_with_optional_state(model, obs, deterministic: bool, lstm_states=None, episode_starts=None):
+    if RecurrentPPO is not None and isinstance(model, RecurrentPPO):
+        if episode_starts is None:
+            episode_starts = np.ones((obs.shape[0],), dtype=bool)
+        return model.predict(
+            obs,
+            state=lstm_states,
+            episode_start=episode_starts,
+            deterministic=deterministic
+        )
+
+    action, _ = model.predict(obs, deterministic=deterministic)
+    return action, None
 
 
 def _safe_float(value: Any) -> float | None:
@@ -162,6 +197,8 @@ def _summarize_basic(records):
 
 def main():
     parser = argparse.ArgumentParser(description="Evaluate trained drone navigation policy")
+    parser.add_argument("--algo", type=str, default="ppo", choices=ALGO_CHOICES,
+                        help="Policy optimizer used by the checkpoint")
     parser.add_argument("--model", type=str, required=True,
                         help="Path to model (.zip can be omitted)")
     parser.add_argument("--normalize", type=str, default=None,
@@ -188,6 +225,7 @@ def main():
     parser.set_defaults(safety_shield=False)
 
     args = parser.parse_args()
+    algo_cls = get_algorithm_class(args.algo)
 
     if args.episodes < 1:
         parser.error("--episodes must be >= 1")
@@ -202,7 +240,7 @@ def main():
     print("=" * 60)
     print("DRONE NAVIGATION EVALUATION")
     print("=" * 60)
-    print(f"[CONFIG] stage={args.stage}, obstacle_type={args.obstacle_type}, planner={args.planner}")
+    print(f"[CONFIG] algo={args.algo}, stage={args.stage}, obstacle_type={args.obstacle_type}, planner={args.planner}")
     print(f"[CONFIG] episodes={args.episodes}, deterministic={not args.stochastic}, safety_shield={shield_enabled}")
 
     env = DummyVecEnv([
@@ -224,7 +262,7 @@ def main():
         else:
             print(f"⚠ Normalization file not found, continuing without it: {args.normalize}")
 
-    model = PPO.load(args.model, env=env)
+    model = algo_cls.load(args.model, env=env)
     print(f"✓ Model loaded: {args.model}")
 
     records = []
@@ -242,9 +280,17 @@ def main():
             ep_reward = 0.0
             steps = 0
             last_info = {}
+            lstm_states = None
+            episode_starts = np.ones((env.num_envs,), dtype=bool)
 
             while not done:
-                action, _ = model.predict(obs, deterministic=deterministic)
+                action, lstm_states = predict_with_optional_state(
+                    model,
+                    obs,
+                    deterministic=deterministic,
+                    lstm_states=lstm_states,
+                    episode_starts=episode_starts
+                )
                 step_result = env.step(action)
 
                 if len(step_result) == 5:
@@ -258,6 +304,7 @@ def main():
                 steps += 1
                 if info and len(info) > 0:
                     last_info = info[0]
+                episode_starts = np.array([done], dtype=bool)
 
             is_success = bool(last_info.get("is_success", False))
             is_crash = bool(last_info.get("is_crash", False))
@@ -348,6 +395,7 @@ def main():
             output_payload = {
                 "config": {
                     "model": args.model,
+                    "algo": args.algo,
                     "normalize": args.normalize,
                     "stage": args.stage,
                     "obstacle_type": args.obstacle_type,

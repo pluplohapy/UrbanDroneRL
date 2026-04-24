@@ -11,6 +11,11 @@ import pybullet as p
 from stable_baselines3 import PPO
 from stable_baselines3.common.vec_env import VecNormalize, DummyVecEnv
 
+try:
+    from sb3_contrib import RecurrentPPO
+except ImportError:
+    RecurrentPPO = None
+
 # Add project root to path to support `python visualization/visualize.py`.
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -23,10 +28,41 @@ from config import load_config
 from config.runtime_sync import sync_runtime_config
 
 
+ALGO_CHOICES = ("ppo", "recurrent_ppo")
+
+
+def get_algorithm_class(algo: str):
+    if algo == "ppo":
+        return PPO
+    if algo == "recurrent_ppo":
+        if RecurrentPPO is None:
+            raise ImportError(
+                "RecurrentPPO requires sb3-contrib. Install it with: pip install sb3-contrib"
+            )
+        return RecurrentPPO
+    raise ValueError(f"Unknown algorithm: {algo}")
+
+
+def predict_with_optional_state(model, obs, deterministic: bool, lstm_states=None, episode_starts=None):
+    if RecurrentPPO is not None and isinstance(model, RecurrentPPO):
+        if episode_starts is None:
+            episode_starts = np.ones((obs.shape[0],), dtype=bool)
+        return model.predict(
+            obs,
+            state=lstm_states,
+            episode_start=episode_starts,
+            deterministic=deterministic
+        )
+
+    action, _ = model.predict(obs, deterministic=deterministic)
+    return action, None
+
+
 def visualize_flight(model_path="models/ppo_drone_nav_test",
                      vec_normalize_path="models/vec_normalize_test.pkl",
                      n_episodes=5,
                      deterministic=True,
+                     algo="ppo",
                      stage=0,
                      obstacle_type='random',
                      watch_fps=60.0,
@@ -48,7 +84,7 @@ def visualize_flight(model_path="models/ppo_drone_nav_test",
     print("=" * 60)
     print("DRONE NAVIGATION VISUALIZATION")
     print("=" * 60)
-    print(f"[CONFIG] watch_fps={watch_fps}, show_paths={show_paths}, safety_shield={safety_shield}")
+    print(f"[CONFIG] algo={algo}, watch_fps={watch_fps}, show_paths={show_paths}, safety_shield={safety_shield}")
     if watch_fps <= 0:
         raise ValueError("watch_fps must be > 0")
 
@@ -93,7 +129,7 @@ def visualize_flight(model_path="models/ppo_drone_nav_test",
     # Load model AFTER environment is set up
     print(f"\n[LOAD] Loading model from {model_path}...")
     try:
-        model = PPO.load(model_path, env=env)
+        model = get_algorithm_class(algo).load(model_path, env=env)
         print("✓ Model loaded")
     except FileNotFoundError:
         print(f"✗ Model not found at {model_path}")
@@ -137,10 +173,18 @@ def visualize_flight(model_path="models/ppo_drone_nav_test",
         velocities_log = []
         heading_errors_log = []
         distances_log = []
+        lstm_states = None
+        episode_starts = np.ones((env.num_envs,), dtype=bool)
 
         while not done:
             # Get action from model
-            action, _ = model.predict(obs, deterministic=deterministic)
+            action, lstm_states = predict_with_optional_state(
+                model,
+                obs,
+                deterministic=deterministic,
+                lstm_states=lstm_states,
+                episode_starts=episode_starts
+            )
             actions_log.append(action[0].copy())
 
             # Get current state BEFORE step
@@ -184,6 +228,7 @@ def visualize_flight(model_path="models/ppo_drone_nav_test",
 
             episode_reward += reward[0]
             step += 1
+            episode_starts = np.array(done, dtype=bool)
 
             if done[0]:
                 # NOTE: In DummyVecEnv, done-step may auto-reset internally.
@@ -276,6 +321,8 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(description="Visualize trained drone navigation")
+    parser.add_argument("--algo", type=str, default="ppo", choices=ALGO_CHOICES,
+                        help="Policy optimizer used by the checkpoint")
     parser.add_argument("--model", type=str, default="models/ppo_drone_nav_test",
                         help="Path to trained model")
     parser.add_argument("--normalize", type=str, default="models/vec_normalize_test.pkl",
@@ -315,6 +362,7 @@ if __name__ == "__main__":
         vec_normalize_path=args.normalize,
         n_episodes=args.episodes,
         deterministic=not args.stochastic,
+        algo=args.algo,
         stage=stage,
         obstacle_type=args.obstacle_type,
         watch_fps=args.watch_fps,

@@ -27,6 +27,11 @@ from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.utils import get_schedule_fn
 
+try:
+    from sb3_contrib import RecurrentPPO
+except ImportError:  # Keep standard PPO usable if sb3-contrib is not installed.
+    RecurrentPPO = None
+
 # Suppress warnings
 warnings.filterwarnings('ignore')
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
@@ -40,6 +45,62 @@ from scenarios.stage0_empty import Stage0Scenario
 from scenarios.stage1_static import Stage1Scenario
 from config import load_config
 from config.runtime_sync import sync_runtime_config
+
+
+ALGO_CHOICES = ("ppo", "recurrent_ppo")
+
+
+def get_algorithm_class(algo: str):
+    if algo == "ppo":
+        return PPO
+    if algo == "recurrent_ppo":
+        if RecurrentPPO is None:
+            raise ImportError(
+                "RecurrentPPO requires sb3-contrib. Install it with: pip install sb3-contrib"
+            )
+        return RecurrentPPO
+    raise ValueError(f"Unknown algorithm: {algo}")
+
+
+def algorithm_display_name(algo: str) -> str:
+    return "RecurrentPPO" if algo == "recurrent_ppo" else "PPO"
+
+
+def is_recurrent_algorithm(algo: str) -> bool:
+    return algo == "recurrent_ppo"
+
+
+def build_algorithm_params(ppo_params: dict, algo: str) -> dict:
+    params = dict(ppo_params)
+    if not is_recurrent_algorithm(algo):
+        return params
+
+    params["policy"] = "MlpLstmPolicy"
+    # gSDE is a nice PPO exploration tool, but it is an unnecessary moving part
+    # for the first recurrent baseline and can interact noisily with LSTM state.
+    params["use_sde"] = False
+    params.pop("sde_sample_freq", None)
+
+    policy_kwargs = dict(params.get("policy_kwargs") or {})
+    policy_kwargs.setdefault("lstm_hidden_size", 128)
+    policy_kwargs.setdefault("n_lstm_layers", 1)
+    params["policy_kwargs"] = policy_kwargs
+    return params
+
+
+def predict_with_optional_state(model, obs, deterministic: bool, lstm_states=None, episode_starts=None):
+    if RecurrentPPO is not None and isinstance(model, RecurrentPPO):
+        if episode_starts is None:
+            episode_starts = np.ones((obs.shape[0],), dtype=bool)
+        return model.predict(
+            obs,
+            state=lstm_states,
+            episode_start=episode_starts,
+            deterministic=deterministic
+        )
+
+    action, _ = model.predict(obs, deterministic=deterministic)
+    return action, None
 
 
 class TrainingDiagnosticsLogger:
@@ -874,9 +935,17 @@ class SuccessRateEvalCallback(BaseCallback):
             ep_reward = 0.0
             ep_len = 0
             last_info = {}
+            lstm_states = None
+            episode_starts = np.ones((self.eval_env.num_envs,), dtype=bool)
 
             while not done:
-                action, _ = self.model.predict(obs, deterministic=self.deterministic)
+                action, lstm_states = predict_with_optional_state(
+                    self.model,
+                    obs,
+                    deterministic=self.deterministic,
+                    lstm_states=lstm_states,
+                    episode_starts=episode_starts
+                )
                 step_result = self.eval_env.step(action)
 
                 if len(step_result) == 5:
@@ -890,6 +959,7 @@ class SuccessRateEvalCallback(BaseCallback):
                 ep_len += 1
                 if info and len(info) > 0:
                     last_info = info[0]
+                episode_starts = np.array([done], dtype=bool)
 
             is_success = bool(last_info.get("is_success", False))
             is_crash = bool(last_info.get("is_crash", False))
@@ -1119,6 +1189,8 @@ def main():
     parser = argparse.ArgumentParser(description='Train drone navigation')
     parser.add_argument('--stage', type=str, required=True, choices=['0', '1', 'pretrain'],
                         help='Training stage: 0 (empty), 1 (obstacles), pretrain (diverse)')
+    parser.add_argument('--algo', type=str, default='ppo', choices=ALGO_CHOICES,
+                        help='Policy optimizer: ppo or recurrent_ppo (LSTM)')
     parser.add_argument('--obstacle-type', type=str, default='random',
                         choices=['random', 'dynamic_mix', 'empty', 'cylinders', 'spheres', 'walls', 'beams', 'boxes', 'swinging_sticks'],
                         help='Obstacle type for pretrain stage (random, dynamic_mix, or specific type)')
@@ -1181,9 +1253,13 @@ def main():
     parser.set_defaults(diag=True, safety_shield=None, eval_enabled=True, eval_deterministic=True)
 
     args = parser.parse_args()
+    algo = args.algo
+    algo_cls = get_algorithm_class(algo)
+    algo_name = algorithm_display_name(algo)
 
     # Load config for the specified stage
     config = load_config(args.stage)
+    algo_params = build_algorithm_params(config.PPO_PARAMS, algo)
 
     # Safety shield toggle (training-friendly default: disabled unless explicitly enabled)
     if args.safety_shield is not None:
@@ -1281,6 +1357,26 @@ def main():
         normalize_path = f"models/vec_normalize_pretrain_{obstacle_type}.pkl"
         log_name = f"PPO_pretrain_{obstacle_type}"
 
+    if algo != "ppo":
+        model_dir, model_base = os.path.split(model_path)
+        if model_base.startswith("ppo_"):
+            model_base = model_base.replace("ppo_", f"{algo}_", 1)
+        else:
+            model_base = f"{algo}_{model_base}"
+        model_path = os.path.join(model_dir, model_base)
+
+        normalize_dir, normalize_base = os.path.split(normalize_path)
+        if normalize_base.startswith("vec_normalize_"):
+            normalize_base = f"vec_normalize_{algo}_{normalize_base[len('vec_normalize_'):]}"
+        else:
+            normalize_base = f"{algo}_{normalize_base}"
+        normalize_path = os.path.join(normalize_dir, normalize_base)
+
+        if log_name.startswith("PPO_"):
+            log_name = f"{algo_name}_{log_name[len('PPO_'):]}"
+        else:
+            log_name = f"{algo_name}_{log_name}"
+
     # Use separate checkpoints/logs for swarm runs to avoid shape mismatch with single-drone artifacts.
     if swarm_drones > 1:
         swarm_suffix = f"_swarm{swarm_drones}"
@@ -1301,6 +1397,7 @@ def main():
     print("=" * 60)
     print(f"\n[CONFIG]")
     print(f"  Stage: {stage}")
+    print(f"  Algorithm: {algo_name}")
     if stage == 'pretrain':
         print(f"  Obstacle type: {args.obstacle_type}")
     print(f"  Use planner: {use_planner}")
@@ -1353,7 +1450,12 @@ def main():
     # Check for transfer learning (Stage 0 -> Stage 1)
     stage0_model = "models/ppo_drone_nav_stage0_planner.zip"
     stage0_normalize = "models/vec_normalize_stage0_planner.pkl"
-    can_transfer = (stage == '1') and os.path.exists(stage0_model) and os.path.exists(stage0_normalize)
+    can_transfer = (
+        algo == "ppo"
+        and stage == '1'
+        and os.path.exists(stage0_model)
+        and os.path.exists(stage0_normalize)
+    )
 
     np.random.seed(config.SEED)
     torch.manual_seed(config.SEED)
@@ -1402,11 +1504,11 @@ def main():
         vec_env.norm_reward = True
         print("✓ VecNormalize stats loaded")
 
-        model = PPO.load(checkpoint_model_path, env=vec_env)
+        model = algo_cls.load(checkpoint_model_path, env=vec_env)
         print("✓ Model loaded")
-        updated = apply_loaded_model_hyperparams(model, config.PPO_PARAMS)
+        updated = apply_loaded_model_hyperparams(model, algo_params)
         if updated:
-            print("✓ Applied PPO overrides for continued training: " + ", ".join(updated))
+            print(f"✓ Applied {algo_name} overrides for continued training: " + ", ".join(updated))
         print(f"\nStarting from {model.num_timesteps} steps")
 
     elif stage == '1' and can_transfer and not checkpoint_exists:
@@ -1416,27 +1518,36 @@ def main():
         vec_env.norm_reward = True
         print("✓ VecNormalize stats loaded from Stage 0")
 
-        model = PPO.load(stage0_model, env=vec_env)
+        model = algo_cls.load(stage0_model, env=vec_env)
         print("✓ Stage 0 model loaded for transfer learning")
-        updated = apply_loaded_model_hyperparams(model, config.PPO_PARAMS)
+        updated = apply_loaded_model_hyperparams(model, algo_params)
         if updated:
-            print("✓ Applied PPO overrides for transfer training: " + ", ".join(updated))
+            print(f"✓ Applied {algo_name} overrides for transfer training: " + ", ".join(updated))
         print(f"\nStarting from {model.num_timesteps} steps")
 
     else:
         print(f"\n[SETUP] Starting from scratch...")
-        vec_env = VecNormalize(
-            vec_env,
-            norm_obs=True,
-            norm_reward=True,
-            clip_obs=10.0,
-            clip_reward=10.0
-        )
+        if args.init_normalize:
+            if not os.path.exists(args.init_normalize):
+                parser.error(f"--init-normalize file not found: {args.init_normalize}")
+            vec_env = VecNormalize.load(args.init_normalize, vec_env)
+            vec_env.training = True
+            vec_env.norm_reward = True
+            print(f"✓ VecNormalize stats initialized from {args.init_normalize}")
+        else:
+            vec_env = VecNormalize(
+                vec_env,
+                norm_obs=True,
+                norm_reward=True,
+                clip_obs=10.0,
+                clip_reward=10.0
+            )
+            print("✓ VecNormalize created")
         print("✓ Environments created")
 
-        print(f"\n[SETUP] Creating PPO model...")
-        model = PPO(
-            **config.PPO_PARAMS,
+        print(f"\n[SETUP] Creating {algo_name} model...")
+        model = algo_cls(
+            **algo_params,
             env=vec_env,
             tensorboard_log="./logs/",
             verbose=1,
@@ -1456,6 +1567,7 @@ def main():
         milestone_window=args.diag_window,
         bad_top_k=args.diag_bad_topk,
         extra_config={
+            "algo": algo,
             "watch_mode": watch_mode,
             "n_envs": int(n_envs),
             "swarm_drones": int(swarm_drones),
@@ -1624,11 +1736,11 @@ def main():
         print("     python compare_planner.py")
     else:  # pretrain
         print("  1. Visualize Pretrain:")
-        print(f"     python visualization/visualize.py --model {model_path} --stage pretrain")
+        print(f"     python visualization/visualize.py --algo {algo} --model {model_path} --stage pretrain")
         print("\n  2. Preview scenario generation:")
         print(f"     python visualization/preview_scenarios.py --stage pretrain --obstacle-type {args.obstacle_type}")
         print("\n  3. Train on different obstacle type:")
-        print("     python training/train.py --stage pretrain --obstacle-type spheres")
+        print(f"     python training/train.py --algo {algo} --stage pretrain --obstacle-type spheres")
 
 
 if __name__ == "__main__":
