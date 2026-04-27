@@ -84,3 +84,7 @@ python visualization/visualize.py --algo recurrent_ppo --model models/best_check
 preview:
 python visualization/preview_scenarios.py --stage pretrain --obstacle-type dynamic_mix --duration 3 --continuous
 
+
+
+--model models/best_checkpoints/RecurrentPPO_pretrain_swinging_sticks_enhanced_obs/best_model.zip
+--normalize models/best_checkpoints/RecurrentPPO_pretrain_swinging_sticks_enhanced_obs/best_model_vecnormalize.pkl
