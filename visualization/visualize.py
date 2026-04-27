@@ -29,6 +29,21 @@ from config.runtime_sync import sync_runtime_config
 
 
 ALGO_CHOICES = ("ppo", "recurrent_ppo")
+PRETRAIN_OBSTACLE_CHOICES = (
+    "random",
+    "dynamic_mix",
+    "empty",
+    "cylinders",
+    "spheres",
+    "crossing_spheres",
+    "walls",
+    "beams",
+    "boxes",
+    "gates",
+    "slalom",
+    "city_blocks",
+    "swinging_sticks",
+)
 
 
 def get_algorithm_class(algo: str):
@@ -334,7 +349,7 @@ if __name__ == "__main__":
     parser.add_argument("--stage", type=str, default="0",
                         help="Stage: 0=empty, 1=static obstacles, pretrain=pretrain")
     parser.add_argument("--obstacle-type", type=str, default="random",
-                        choices=["random", "dynamic_mix", "empty", "cylinders", "spheres", "walls", "beams", "boxes", "swinging_sticks"],
+                        choices=PRETRAIN_OBSTACLE_CHOICES,
                         help="Obstacle type for pretrain stage")
     parser.add_argument("--watch-fps", type=float, default=60.0,
                         help="Target GUI FPS (same as train --watch-fps)")

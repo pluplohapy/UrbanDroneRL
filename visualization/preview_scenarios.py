@@ -25,6 +25,21 @@ from scenarios.stage1_static import Stage1Scenario
 from scenarios.stage_pretrain import StagePretrainScenario
 from config import load_config
 
+PRETRAIN_OBSTACLE_CHOICES = (
+    'random',
+    'dynamic_mix',
+    'cylinders',
+    'spheres',
+    'crossing_spheres',
+    'walls',
+    'beams',
+    'boxes',
+    'gates',
+    'slalom',
+    'city_blocks',
+    'swinging_sticks',
+)
+
 
 def add_marker(position, color, size=0.2, client_id=0):
     """Add a visual marker at position."""
@@ -199,8 +214,7 @@ def main():
                        choices=['0', '1', 'pretrain'],
                        help='Stage to preview')
     parser.add_argument('--obstacle-type', type=str, default='random',
-                       choices=['random', 'dynamic_mix', 'cylinders', 'spheres', 'walls',
-                               'beams', 'boxes', 'swinging_sticks'],
+                       choices=PRETRAIN_OBSTACLE_CHOICES,
                        help='Obstacle type for pretrain stage')
     parser.add_argument('--duration', type=int, default=5,
                        help='Seconds to show each scenario (default: 5)')

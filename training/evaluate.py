@@ -32,6 +32,21 @@ from config.runtime_sync import sync_runtime_config
 
 
 ALGO_CHOICES = ("ppo", "recurrent_ppo")
+PRETRAIN_OBSTACLE_CHOICES = (
+    "random",
+    "dynamic_mix",
+    "empty",
+    "cylinders",
+    "spheres",
+    "crossing_spheres",
+    "walls",
+    "beams",
+    "boxes",
+    "gates",
+    "slalom",
+    "city_blocks",
+    "swinging_sticks",
+)
 
 
 def get_algorithm_class(algo: str):
@@ -121,6 +136,20 @@ def _summarize(records, timeout_near_goal_threshold: float):
         and r["min_goal_dist"] is not None
         and r["min_goal_dist"] <= timeout_near_goal_threshold
     )
+    crash_near_goal = sum(
+        1
+        for r in records
+        if r["outcome"] == "crash"
+        and r["min_goal_dist"] is not None
+        and r["min_goal_dist"] <= timeout_near_goal_threshold
+    )
+    oob_near_goal = sum(
+        1
+        for r in records
+        if r["crash_reason"] == "out_of_bounds"
+        and r["min_goal_dist"] is not None
+        and r["min_goal_dist"] <= timeout_near_goal_threshold
+    )
 
     steps = [r["steps"] for r in records]
     rewards = [r["episode_reward"] for r in records if r["episode_reward"] is not None]
@@ -144,6 +173,8 @@ def _summarize(records, timeout_near_goal_threshold: float):
             "other": crash_other
         },
         "timeout_near_goal": timeout_near_goal,
+        "crash_near_goal": crash_near_goal,
+        "out_of_bounds_near_goal": oob_near_goal,
         "means": {
             "steps": float(np.mean(steps)) if steps else None,
             "reward": float(np.mean(rewards)) if rewards else None,
@@ -206,7 +237,7 @@ def main():
     parser.add_argument("--stage", type=str, default="pretrain", choices=["0", "1", "pretrain"],
                         help="Evaluation stage")
     parser.add_argument("--obstacle-type", type=str, default="random",
-                        choices=["random", "dynamic_mix", "empty", "cylinders", "spheres", "walls", "beams", "boxes", "swinging_sticks"],
+                        choices=PRETRAIN_OBSTACLE_CHOICES,
                         help="Obstacle type for pretrain stage")
     parser.add_argument("--episodes", type=int, default=50,
                         help="Number of evaluation episodes")
@@ -375,9 +406,14 @@ def main():
             f"{summary['timeout_near_goal']}"
         )
         print(
+            f"Crash near goal (<= {float(config.TIMEOUT_NEAR_GOAL_THRESHOLD):.2f}m): "
+            f"{summary['crash_near_goal']} | oob={summary['out_of_bounds_near_goal']}"
+        )
+        print(
             f"Mean steps: {_fmt(summary['means']['steps'], '.1f')} | "
             f"Mean reward: {_fmt(summary['means']['reward'], '.2f')} | "
-            f"Mean final dist: {_fmt(summary['means']['final_dist'], '.2f')}"
+            f"Mean final dist: {_fmt(summary['means']['final_dist'], '.2f')} | "
+            f"Mean min dist: {_fmt(summary['means']['min_goal_dist'], '.2f')}"
         )
         if summary.get("by_obstacle_type"):
             print("\nBy obstacle type:")

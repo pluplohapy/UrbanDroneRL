@@ -16,6 +16,7 @@ import sys
 import argparse
 import json
 import heapq
+import shutil
 import numpy as np
 import torch
 import warnings
@@ -48,6 +49,21 @@ from config.runtime_sync import sync_runtime_config
 
 
 ALGO_CHOICES = ("ppo", "recurrent_ppo")
+PRETRAIN_OBSTACLE_CHOICES = (
+    "random",
+    "dynamic_mix",
+    "empty",
+    "cylinders",
+    "spheres",
+    "crossing_spheres",
+    "walls",
+    "beams",
+    "boxes",
+    "gates",
+    "slalom",
+    "city_blocks",
+    "swinging_sticks",
+)
 
 
 def get_algorithm_class(algo: str):
@@ -68,6 +84,20 @@ def algorithm_display_name(algo: str) -> str:
 
 def is_recurrent_algorithm(algo: str) -> bool:
     return algo == "recurrent_ppo"
+
+
+def sync_env_runtime_config(scenario):
+    """
+    Keep worker-process runtime config aligned with the scenario config.
+
+    SubprocVecEnv starts child Python processes. Those processes import the
+    global ``config`` module independently, so the main-process
+    sync_runtime_config(...) call is not enough for reward/action code that
+    still reads global config constants inside the environment.
+    """
+    scenario_config = getattr(scenario, "config", None)
+    if scenario_config is not None:
+        sync_runtime_config(scenario_config)
 
 
 def build_algorithm_params(ppo_params: dict, algo: str) -> dict:
@@ -196,8 +226,18 @@ class TrainingDiagnosticsLogger:
                 "yaw_penalty": float(config.REWARD_YAW_PENALTY_SCALE),
                 "smoothness": float(config.REWARD_ACTION_SMOOTHNESS_SCALE),
                 "proximity": float(config.REWARD_PROXIMITY_SCALE),
+                "obstacle_approach": float(config.REWARD_OBSTACLE_APPROACH_SCALE),
+                "obstacle_hard_threshold": float(getattr(config, "REWARD_OBSTACLE_HARD_THRESHOLD", 0.0)),
+                "obstacle_hard_scale": float(getattr(config, "REWARD_OBSTACLE_HARD_SCALE", 0.0)),
                 "boundary_threshold": float(config.REWARD_BOUNDARY_THRESHOLD),
                 "boundary_scale": float(config.REWARD_BOUNDARY_SCALE),
+                "boundary_outward": float(getattr(config, "REWARD_BOUNDARY_OUTWARD_SCALE", 0.0)),
+                "near_goal_radius": float(getattr(config, "REWARD_NEAR_GOAL_RADIUS", 0.0)),
+                "near_goal_progress": float(getattr(config, "REWARD_NEAR_GOAL_PROGRESS_SCALE", 0.0)),
+                "near_goal_stall": float(getattr(config, "REWARD_NEAR_GOAL_STALL_SCALE", 0.0)),
+                "near_goal_away": float(getattr(config, "REWARD_NEAR_GOAL_AWAY_SCALE", 0.0)),
+                "near_goal_speed": float(getattr(config, "REWARD_NEAR_GOAL_SPEED_SCALE", 0.0)),
+                "near_goal_boundary": float(getattr(config, "REWARD_NEAR_GOAL_BOUNDARY_SCALE", 0.0)),
                 "step_penalty": float(config.REWARD_STEP_PENALTY),
                 "success": float(config.REWARD_SUCCESS),
                 "crash": float(config.REWARD_CRASH),
@@ -648,7 +688,13 @@ class ProgressCallback(BaseCallback):
 
         # Debug metrics storage
         if config.DEBUG_MODE:
-            self.reward_components = {k: [] for k in ['progress', 'velocity', 'proximity', 'obstacle', 'boundary', 'step_penalty', 'exploration', 'terminal', 'efficiency_bonus', 'yaw_penalty', 'heading', 'smoothness']}
+            self.reward_components = {k: [] for k in [
+                'progress', 'velocity', 'proximity', 'obstacle', 'obstacle_approach',
+                'obstacle_hard', 'boundary', 'boundary_outward', 'near_goal_stall',
+                'near_goal_progress', 'near_goal_away', 'near_goal_speed', 'near_goal_boundary',
+                'step_penalty', 'exploration', 'terminal',
+                'efficiency_bonus', 'yaw_penalty', 'heading', 'smoothness'
+            ]}
             self.navigation_metrics = {'path_efficiency': [], 'avg_heading_error': [], 'avg_speed': []}
             self.episode_metrics = {'start_distance': [], 'min_goal_distance': [], 'closest_obstacle': [], 'n_near_misses': []}
             self.action_stats = {'action_mean': [], 'action_std': [], 'action_smoothness': []}
@@ -827,10 +873,18 @@ class ProgressCallback(BaseCallback):
                 vel = np.mean(self.reward_components['velocity'][-recent_n:])
                 prox = np.mean(self.reward_components['proximity'][-recent_n:])
                 obst = np.mean(self.reward_components['obstacle'][-recent_n:])
+                for key in ('obstacle_approach', 'obstacle_hard'):
+                    if len(self.reward_components[key]) > 0:
+                        obst += np.mean(self.reward_components[key][-recent_n:])
                 bound = np.mean(self.reward_components['boundary'][-recent_n:]) if len(self.reward_components['boundary']) > 0 else 0
+                bound_out = np.mean(self.reward_components['boundary_outward'][-recent_n:]) if len(self.reward_components['boundary_outward']) > 0 else 0
+                near = 0.0
+                for key in ('near_goal_stall', 'near_goal_progress', 'near_goal_away', 'near_goal_speed', 'near_goal_boundary'):
+                    if len(self.reward_components[key]) > 0:
+                        near += np.mean(self.reward_components[key][-recent_n:])
                 step = np.mean(self.reward_components['step_penalty'][-recent_n:])
                 term = np.mean(self.reward_components['terminal'][-recent_n:]) if len(self.reward_components['terminal']) > 0 else 0
-                print(f"  Reward   : total={avg_reward:7.1f} | prog={prog:5.1f} | vel={vel:4.1f} | prox={prox:4.1f} | obst={obst:5.1f} | bound={bound:5.1f} | term={term:5.1f}")
+                print(f"  Reward   : total={avg_reward:7.1f} | prog={prog:5.1f} | vel={vel:4.1f} | prox={prox:4.1f} | obst={obst:5.1f} | bound={bound + bound_out:5.1f} | near={near:5.1f} | term={term:5.1f}")
 
             # Navigation metrics
             if self.config.LOG_NAVIGATION_METRICS and len(self.navigation_metrics['path_efficiency']) > 0:
@@ -896,6 +950,8 @@ class SuccessRateEvalCallback(BaseCallback):
         eval_freq: int = 10_000,
         n_eval_episodes: int = 20,
         deterministic: bool = True,
+        load_existing_best: bool = True,
+        run_id: str | None = None,
         verbose: int = 1,
     ):
         super().__init__(verbose=verbose)
@@ -905,12 +961,56 @@ class SuccessRateEvalCallback(BaseCallback):
         self.eval_freq = max(1, int(eval_freq))
         self.n_eval_episodes = max(1, int(n_eval_episodes))
         self.deterministic = bool(deterministic)
+        self.run_id = run_id
         self.best_success_rate = -np.inf
         self.best_mean_reward = -np.inf
         self.eval_history_path = os.path.join(self.log_path, "eval_history.jsonl")
+        self.loaded_existing_best = False
+        self.loaded_existing_best_timesteps = None
 
         os.makedirs(self.best_model_save_path, exist_ok=True)
         os.makedirs(self.log_path, exist_ok=True)
+        if load_existing_best:
+            self._load_existing_best()
+
+    def _load_existing_best(self):
+        best_model_path = os.path.join(self.best_model_save_path, "best_model.zip")
+        best_normalize_path = os.path.join(self.best_model_save_path, "best_model_vecnormalize.pkl")
+        if not (os.path.exists(best_model_path) and os.path.exists(best_normalize_path)):
+            return
+        if not os.path.exists(self.eval_history_path):
+            return
+
+        best_row = None
+        with open(self.eval_history_path, "r", encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    row = json.loads(line)
+                    success_rate = float(row.get("success_rate", -np.inf))
+                    mean_reward = float(row.get("mean_reward", -np.inf))
+                except (TypeError, ValueError, json.JSONDecodeError):
+                    continue
+
+                if (
+                    best_row is None
+                    or success_rate > float(best_row.get("success_rate", -np.inf)) + 1e-12
+                    or (
+                        abs(success_rate - float(best_row.get("success_rate", -np.inf))) <= 1e-12
+                        and mean_reward > float(best_row.get("mean_reward", -np.inf)) + 1e-9
+                    )
+                ):
+                    best_row = row
+
+        if best_row is None:
+            return
+
+        self.best_success_rate = float(best_row.get("success_rate", -np.inf))
+        self.best_mean_reward = float(best_row.get("mean_reward", -np.inf))
+        self.loaded_existing_best_timesteps = best_row.get("timesteps")
+        self.loaded_existing_best = True
 
     def _on_step(self) -> bool:
         if self.n_calls % self.eval_freq != 0:
@@ -996,6 +1096,8 @@ class SuccessRateEvalCallback(BaseCallback):
         self.logger.dump(self.num_timesteps)
 
         eval_row = {
+            "created_at": datetime.now().isoformat(),
+            "run_id": self.run_id,
             "timesteps": int(self.num_timesteps),
             "mean_reward": mean_reward,
             "mean_ep_length": mean_ep_length,
@@ -1043,6 +1145,7 @@ def make_env_stage0(rank, seed=0, use_planner=True, config=None, gui=False, watc
     """Create Stage 0 environment (empty arena)."""
     def _init():
         scenario = Stage0Scenario(seed=seed + rank)
+        sync_env_runtime_config(scenario)
 
         if use_planner:
             env = NavAviaryWithPlanner(
@@ -1083,6 +1186,7 @@ def make_env_stage1(rank, seed=0, use_planner=True, config=None, gui=False, watc
     """Create Stage 1 environment (static obstacles)."""
     def _init():
         scenario = Stage1Scenario(seed=seed + rank)
+        sync_env_runtime_config(scenario)
 
         if use_planner:
             env = NavAviaryWithPlanner(
@@ -1128,6 +1232,7 @@ def make_env_pretrain(rank, seed=0, obstacle_type='random', config=None, gui=Fal
             obstacle_type=obstacle_type,
             seed=seed + rank
         )
+        sync_env_runtime_config(scenario)
 
         # Pretrain NEVER uses planner
         env = NavAviary(
@@ -1192,12 +1297,16 @@ def main():
     parser.add_argument('--algo', type=str, default='ppo', choices=ALGO_CHOICES,
                         help='Policy optimizer: ppo or recurrent_ppo (LSTM)')
     parser.add_argument('--obstacle-type', type=str, default='random',
-                        choices=['random', 'dynamic_mix', 'empty', 'cylinders', 'spheres', 'walls', 'beams', 'boxes', 'swinging_sticks'],
+                        choices=PRETRAIN_OBSTACLE_CHOICES,
                         help='Obstacle type for pretrain stage (random, dynamic_mix, or specific type)')
     parser.add_argument('--no-planner', action='store_true',
                         help='Disable RRT* planner (enabled by default for stage 0/1, always disabled for pretrain)')
     parser.add_argument('--timesteps', type=int, default=None,
-                        help='Total training timesteps (default: 500k for Stage 0, 1.5M for Stage 1, 500k for pretrain)')
+                        help='Training timesteps to run; when continuing, this is additional budget')
+    parser.add_argument('--learning-rate', type=float, default=None,
+                        help='Override PPO/RecurrentPPO learning rate for this run')
+    parser.add_argument('--seed', type=int, default=None,
+                        help='Training RNG/base environment seed (default: config.SEED)')
     parser.add_argument('--n-envs', type=int, default=None,
                         help='Number of parallel environments (default: from config)')
     parser.add_argument('--continue', dest='continue_training', action='store_true',
@@ -1237,9 +1346,9 @@ def main():
     parser.add_argument('--diag-bad-topk', type=int, default=300,
                         help='Keep top-K worst failure episodes in diagnostics')
     parser.add_argument('--eval', dest='eval_enabled', action='store_true',
-                        help='Enable periodic evaluation and best-checkpoint saving (default)')
+                        help='Enable periodic evaluation and best-checkpoint saving')
     parser.add_argument('--no-eval', dest='eval_enabled', action='store_false',
-                        help='Disable periodic evaluation and best-checkpoint saving')
+                        help='Disable periodic evaluation and best-checkpoint saving (default)')
     parser.add_argument('--eval-freq', type=int, default=50_000,
                         help='Evaluation frequency in environment steps (default: 50000)')
     parser.add_argument('--eval-episodes', type=int, default=20,
@@ -1250,16 +1359,41 @@ def main():
                         help='Use deterministic policy during periodic eval (default)')
     parser.add_argument('--eval-stochastic', dest='eval_deterministic', action='store_false',
                         help='Use stochastic policy during periodic eval')
-    parser.set_defaults(diag=True, safety_shield=None, eval_enabled=True, eval_deterministic=True)
+    parser.add_argument('--reset-best', action='store_true',
+                        help='Ignore existing eval history and allow overwriting best checkpoint from this run')
+    parser.add_argument('--save-final-to-main', dest='save_final_to_main', action='store_true',
+                        help='Save the last policy to the standard model path at the end')
+    parser.add_argument('--no-save-final-to-main', dest='save_final_to_main', action='store_false',
+                        help='Keep the standard model path unchanged; final policy is saved as last checkpoint only')
+    parser.add_argument('--promote-best-to-main', action='store_true',
+                        help='Copy the best eval checkpoint to the standard model path after training')
+    parser.set_defaults(
+        diag=True,
+        safety_shield=None,
+        eval_enabled=False,
+        eval_deterministic=True,
+        save_final_to_main=None
+    )
 
     args = parser.parse_args()
     algo = args.algo
     algo_cls = get_algorithm_class(algo)
     algo_name = algorithm_display_name(algo)
 
+    if args.learning_rate is not None and args.learning_rate <= 0:
+        parser.error("--learning-rate must be > 0")
+    if args.seed is not None and args.seed < 0:
+        parser.error("--seed must be >= 0")
+    if args.promote_best_to_main and not args.eval_enabled:
+        parser.error("--promote-best-to-main requires periodic eval; remove --no-eval")
+
     # Load config for the specified stage
     config = load_config(args.stage)
     algo_params = build_algorithm_params(config.PPO_PARAMS, algo)
+    if args.learning_rate is not None:
+        algo_params["learning_rate"] = float(args.learning_rate)
+    train_seed = int(config.SEED if args.seed is None else args.seed)
+    config.SEED = train_seed
 
     # Safety shield toggle (training-friendly default: disabled unless explicitly enabled)
     if args.safety_shield is not None:
@@ -1288,6 +1422,9 @@ def main():
     fixed_map = args.fixed_map or watch_mode
     show_paths = (args.show_paths or watch_mode) and (not args.no_show_paths)
     swarm_drones = args.swarm_drones
+    save_final_to_main = args.save_final_to_main
+    if save_final_to_main is None:
+        save_final_to_main = not (args.continue_training and args.eval_enabled)
 
     if swarm_drones < 1:
         parser.error("--swarm-drones must be >= 1")
@@ -1377,6 +1514,17 @@ def main():
         else:
             log_name = f"{algo_name}_{log_name}"
 
+    # Use separate artifacts for enhanced observations because policy input shape changes.
+    enhanced_obs = bool(getattr(config, "USE_ENHANCED_OBS", False))
+    if enhanced_obs:
+        obs_suffix = "_enhanced_obs"
+        model_path = f"{model_path}{obs_suffix}"
+        if normalize_path.endswith(".pkl"):
+            normalize_path = normalize_path[:-4] + f"{obs_suffix}.pkl"
+        else:
+            normalize_path = f"{normalize_path}{obs_suffix}"
+        log_name = f"{log_name}{obs_suffix}"
+
     # Use separate checkpoints/logs for swarm runs to avoid shape mismatch with single-drone artifacts.
     if swarm_drones > 1:
         swarm_suffix = f"_swarm{swarm_drones}"
@@ -1402,10 +1550,13 @@ def main():
         print(f"  Obstacle type: {args.obstacle_type}")
     print(f"  Use planner: {use_planner}")
     print(f"  Total timesteps: {timesteps:,}")
+    print(f"  Training seed: {train_seed}")
+    print(f"  Learning rate: {float(algo_params.get('learning_rate', 0.0)):g}")
     print(f"  Parallel envs: {n_envs}")
     print(f"  Watch mode: {watch_mode}")
     print(f"  Fixed map: {fixed_map}")
     print(f"  Show paths: {show_paths}")
+    print(f"  Enhanced observations: {enhanced_obs}")
     print(f"  Swarm drones: {swarm_drones}")
     print(f"  Diagnostics logs: {args.diag}")
     print(f"  Periodic eval: {args.eval_enabled}")
@@ -1413,6 +1564,9 @@ def main():
         print(f"  Eval frequency: {args.eval_freq:,} env steps")
         print(f"  Eval episodes: {args.eval_episodes}")
         print(f"  Eval deterministic: {args.eval_deterministic}")
+        print(f"  Preserve existing best: {not args.reset_best}")
+        print(f"  Promote best to main: {args.promote_best_to_main}")
+    print(f"  Save final to main: {save_final_to_main}")
     print(f"  Safety shield: {bool(getattr(config, 'SAFETY_SHIELD_ENABLED', False))}")
     if watch_mode:
         print(f"  Watch FPS: {args.watch_fps}")
@@ -1457,8 +1611,8 @@ def main():
         and os.path.exists(stage0_normalize)
     )
 
-    np.random.seed(config.SEED)
-    torch.manual_seed(config.SEED)
+    np.random.seed(train_seed)
+    torch.manual_seed(train_seed)
 
     os.makedirs("logs", exist_ok=True)
     os.makedirs("models", exist_ok=True)
@@ -1466,19 +1620,19 @@ def main():
     # Create environments
     print(f"\n[SETUP] Creating environments...")
     if stage == '0':
-        env_fns = [make_env_stage0(i, config.SEED, use_planner, config,
+        env_fns = [make_env_stage0(i, train_seed, use_planner, config,
                                    gui=watch_mode, watch_fps=args.watch_fps,
                                    fixed_map=fixed_map, show_paths=show_paths,
                                    swarm_drones=swarm_drones)
                    for i in range(n_envs)]
     elif stage == '1':
-        env_fns = [make_env_stage1(i, config.SEED, use_planner, config,
+        env_fns = [make_env_stage1(i, train_seed, use_planner, config,
                                    gui=watch_mode, watch_fps=args.watch_fps,
                                    fixed_map=fixed_map, show_paths=show_paths,
                                    swarm_drones=swarm_drones)
                    for i in range(n_envs)]
     else:  # pretrain
-        env_fns = [make_env_pretrain(i, config.SEED, args.obstacle_type, config,
+        env_fns = [make_env_pretrain(i, train_seed, args.obstacle_type, config,
                                      gui=watch_mode, watch_fps=args.watch_fps,
                                      fixed_map=fixed_map, show_paths=show_paths,
                                      swarm_drones=swarm_drones)
@@ -1568,6 +1722,7 @@ def main():
         bad_top_k=args.diag_bad_topk,
         extra_config={
             "algo": algo,
+            "seed": int(train_seed),
             "watch_mode": watch_mode,
             "n_envs": int(n_envs),
             "swarm_drones": int(swarm_drones),
@@ -1577,11 +1732,15 @@ def main():
             "init_model": checkpoint_model_path if args.continue_training else None,
             "init_normalize": checkpoint_normalize_path if args.continue_training else None,
             "timesteps_target": int(timesteps),
+            "learning_rate": float(algo_params.get("learning_rate", 0.0)),
             "eval_enabled": bool(args.eval_enabled),
             "eval_freq_env_steps": int(args.eval_freq),
             "eval_episodes": int(args.eval_episodes),
             "eval_seed": int(args.eval_seed),
-            "eval_deterministic": bool(args.eval_deterministic)
+            "eval_deterministic": bool(args.eval_deterministic),
+            "reset_best": bool(args.reset_best),
+            "save_final_to_main": bool(save_final_to_main),
+            "promote_best_to_main": bool(args.promote_best_to_main)
         }
     )
     if args.diag and diag_logger.run_dir is not None:
@@ -1599,6 +1758,10 @@ def main():
     eval_callback = None
     best_model_dir = os.path.join("models", "best_checkpoints", log_name)
     best_model_path = os.path.join(best_model_dir, "best_model.zip")
+    best_normalize_path = os.path.join(best_model_dir, "best_model_vecnormalize.pkl")
+    last_model_dir = os.path.join("models", "last_checkpoints", log_name)
+    last_model_path = os.path.join(last_model_dir, "last_model")
+    last_normalize_path = os.path.join(last_model_dir, "last_model_vecnormalize.pkl")
     eval_log_dir = os.path.join("logs", "eval", log_name)
 
     if args.eval_enabled:
@@ -1664,6 +1827,8 @@ def main():
             eval_freq=eval_freq_rollouts,
             n_eval_episodes=args.eval_episodes,
             deterministic=args.eval_deterministic,
+            load_existing_best=not args.reset_best,
+            run_id=os.path.basename(diag_logger.run_dir) if diag_logger.run_dir else None,
             verbose=1
         )
         callbacks.append(eval_callback)
@@ -1672,6 +1837,15 @@ def main():
         print(f"✓ Eval callback frequency: every {eval_freq_rollouts} rollout steps (~{args.eval_freq:,} env steps)")
         print(f"✓ Best model path: {best_model_path}")
         print("✓ Best-checkpoint criterion: success_rate (tie-break: mean_reward)")
+        if eval_callback.loaded_existing_best:
+            print(
+                "✓ Existing best preserved: "
+                f"success={eval_callback.best_success_rate:.1%}, "
+                f"reward={eval_callback.best_mean_reward:.2f}, "
+                f"steps={eval_callback.loaded_existing_best_timesteps}"
+            )
+        elif args.reset_best:
+            print("⚠ Existing best history ignored for this run (--reset-best)")
 
     print(f"\n[TRAINING] Starting training...")
     print("-" * 60)
@@ -1690,12 +1864,32 @@ def main():
     except KeyboardInterrupt:
         print("\n\n[INFO] Training interrupted by user")
 
-    # Save model
+    # Save the last policy separately so a post-peak policy does not silently
+    # replace the best evaluated artifact.
     print(f"\n[SAVE] Saving model...")
-    model.save(model_path)
-    vec_env.save(normalize_path)
-    print(f"✓ Model saved to {model_path}.zip")
-    print(f"✓ Normalization saved to {normalize_path}")
+    os.makedirs(last_model_dir, exist_ok=True)
+    model.save(last_model_path)
+    vec_env.save(last_normalize_path)
+    print(f"✓ Last model saved to {last_model_path}.zip")
+    print(f"✓ Last normalization saved to {last_normalize_path}")
+
+    if args.promote_best_to_main:
+        if os.path.exists(best_model_path) and os.path.exists(best_normalize_path):
+            shutil.copyfile(best_model_path, f"{model_path}.zip")
+            shutil.copyfile(best_normalize_path, normalize_path)
+            print(f"✓ Best eval model promoted to {model_path}.zip")
+            print(f"✓ Best eval normalization promoted to {normalize_path}")
+        else:
+            print("⚠ Could not promote best checkpoint: best model or normalization file is missing")
+    elif save_final_to_main:
+        model.save(model_path)
+        vec_env.save(normalize_path)
+        print(f"✓ Final model saved to {model_path}.zip")
+        print(f"✓ Final normalization saved to {normalize_path}")
+    else:
+        print(f"✓ Main model preserved: {model_path}.zip")
+        print(f"✓ Main normalization preserved: {normalize_path}")
+
     if args.eval_enabled:
         if os.path.exists(best_model_path):
             print(f"✓ Best eval model saved to {best_model_path}")
