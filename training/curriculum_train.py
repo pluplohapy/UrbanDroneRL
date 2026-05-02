@@ -60,6 +60,11 @@ def split_csv(value: str) -> list[str]:
     return [item.strip() for item in value.split(",") if item.strip()]
 
 
+def safe_run_tag(value: str) -> str:
+    raw = str(value or "").strip()
+    return "".join(ch if ch.isalnum() or ch in "._-" else "_" for ch in raw).strip("_")
+
+
 def algo_display_name(algo: str) -> str:
     return "RecurrentPPO" if algo == "recurrent_ppo" else "PPO"
 
@@ -79,7 +84,12 @@ def pretrain_obs_suffix() -> str:
     return "_enhanced_obs" if getattr(cfg, "USE_ENHANCED_OBS", False) else ""
 
 
-def normalize_filename(algo: str, obstacle_type: str) -> str:
+def artifact_suffix(artifact_tag: str) -> str:
+    tag = safe_run_tag(artifact_tag)
+    return f"_{tag}" if tag else ""
+
+
+def normalize_filename(algo: str, obstacle_type: str, artifact_tag: str = "") -> str:
     if algo == "recurrent_ppo":
         base = f"vec_normalize_recurrent_ppo_pretrain_{obstacle_type}.pkl"
     else:
@@ -87,15 +97,19 @@ def normalize_filename(algo: str, obstacle_type: str) -> str:
 
     suffix = pretrain_obs_suffix()
     if suffix:
-        return base[:-4] + f"{suffix}.pkl"
+        base = base[:-4] + f"{suffix}.pkl"
+    suffix = artifact_suffix(artifact_tag)
+    if suffix:
+        base = base[:-4] + f"{suffix}.pkl"
     return base
 
 
-def checkpoint_candidates(root: Path, algo: str, obstacle_type: str) -> list[tuple[Path, Path, str]]:
+def checkpoint_candidates(root: Path, algo: str, obstacle_type: str, artifact_tag: str = "") -> list[tuple[Path, Path, str]]:
     display = algo_display_name(algo)
     prefix = model_prefix(algo)
     suffix = pretrain_obs_suffix()
-    log_name = f"{display}_pretrain_{obstacle_type}{suffix}"
+    tag_suffix = artifact_suffix(artifact_tag)
+    log_name = f"{display}_pretrain_{obstacle_type}{suffix}{tag_suffix}"
 
     return [
         (
@@ -104,8 +118,8 @@ def checkpoint_candidates(root: Path, algo: str, obstacle_type: str) -> list[tup
             "best",
         ),
         (
-            root / "models" / f"{prefix}_pretrain_{obstacle_type}{suffix}.zip",
-            root / "models" / normalize_filename(algo, obstacle_type),
+            root / "models" / f"{prefix}_pretrain_{obstacle_type}{suffix}{tag_suffix}.zip",
+            root / "models" / normalize_filename(algo, obstacle_type, artifact_tag),
             "main",
         ),
         (
@@ -116,8 +130,8 @@ def checkpoint_candidates(root: Path, algo: str, obstacle_type: str) -> list[tup
     ]
 
 
-def find_checkpoint(root: Path, algo: str, obstacle_type: str) -> tuple[Path, Path, str] | None:
-    for model_path, normalize_path, label in checkpoint_candidates(root, algo, obstacle_type):
+def find_checkpoint(root: Path, algo: str, obstacle_type: str, artifact_tag: str = "") -> tuple[Path, Path, str] | None:
+    for model_path, normalize_path, label in checkpoint_candidates(root, algo, obstacle_type, artifact_tag):
         if model_path.exists() and normalize_path.exists():
             return model_path, normalize_path, label
     return None
@@ -254,6 +268,10 @@ def train_chunk(
         command.extend(["--learning-rate", str(args.learning_rate)])
     if args.no_diag:
         command.append("--no-diag")
+    if args.run_tag:
+        command.extend(["--run-tag", args.run_tag])
+    if args.artifact_tag:
+        command.extend(["--artifact-tag", args.artifact_tag])
 
     run_command(root, command, dry_run=args.dry_run)
 
@@ -300,6 +318,10 @@ def main() -> None:
                         help="Comma-separated plot formats, e.g. png,svg")
     parser.add_argument("--plots-run-filter", default="",
                         help="Optional substring filter for logs included in generated plots")
+    parser.add_argument("--run-tag", default="",
+                        help="Shared suffix for train.py TensorBoard/eval/diagnostics logs")
+    parser.add_argument("--artifact-tag", default="",
+                        help="Suffix for model/checkpoint artifacts to avoid overwriting existing runs")
     parser.add_argument("--continue-on-fail", action="store_true",
                         help="Continue to the next stage even if target was not reached")
     parser.add_argument("--allow-scratch", action="store_true",
@@ -324,7 +346,12 @@ def main() -> None:
         parser.error("--seed-stride must be >= 1")
 
     root = repo_root()
-    reports_dir = root / args.reports_dir / time.strftime("%Y%m%d_%H%M%S")
+    run_stamp = time.strftime("%Y%m%d_%H%M%S")
+    reports_dir = root / args.reports_dir / run_stamp
+    args.run_tag = safe_run_tag(args.run_tag)
+    args.artifact_tag = safe_run_tag(args.artifact_tag)
+    if args.make_plots and not args.run_tag:
+        args.run_tag = args.artifact_tag or f"pipeline_{run_stamp}"
     targets = parse_target_overrides(args.target_overrides)
     stages = [stage for stage in split_csv(args.stages) if stage not in set(split_csv(args.skip_stages))]
     plots_state = {"generated": False}
@@ -333,7 +360,7 @@ def main() -> None:
         if plots_state["generated"] or not args.make_plots or args.dry_run:
             return
         plots_state["generated"] = True
-        plot_tag = time.strftime("%Y%m%d_%H%M%S")
+        plot_tag = args.run_tag or time.strftime("%Y%m%d_%H%M%S")
         command = [
             sys.executable,
             "training/generate_training_plots.py",
@@ -344,10 +371,11 @@ def main() -> None:
             "--formats",
             args.plots_formats,
             "--curriculum-reports-dir",
-            args.reports_dir,
+            str(reports_dir),
         ]
-        if args.plots_run_filter:
-            command.extend(["--run-filter", args.plots_run_filter])
+        plots_filter = args.plots_run_filter or args.run_tag
+        if plots_filter:
+            command.extend(["--run-filter", plots_filter])
         try:
             run_command(root, command, dry_run=False)
         except Exception as exc:
@@ -362,7 +390,7 @@ def main() -> None:
 
     if current_model is None:
         for start_obstacle in split_csv(args.start_from):
-            found = find_checkpoint(root, args.algo, start_obstacle)
+            found = find_checkpoint(root, args.algo, start_obstacle, args.artifact_tag)
             if found is not None:
                 current_model, current_normalize, label = found
                 print(
@@ -380,6 +408,10 @@ def main() -> None:
 
     print("[CURRICULUM] Stages: " + ", ".join(stages), flush=True)
     print(f"[CURRICULUM] Reports: {reports_dir}", flush=True)
+    if args.artifact_tag:
+        print(f"[CURRICULUM] Artifact tag: {args.artifact_tag}", flush=True)
+    if args.run_tag:
+        print(f"[CURRICULUM] Run tag: {args.run_tag}", flush=True)
 
     for stage_idx, obstacle_type in enumerate(stages):
         target = targets.get(obstacle_type, args.target_success)
@@ -425,7 +457,7 @@ def main() -> None:
                 print(f"[DRY] Would evaluate produced checkpoint for {obstacle_type}", flush=True)
                 break
 
-            found = find_checkpoint(root, args.algo, obstacle_type)
+            found = find_checkpoint(root, args.algo, obstacle_type, args.artifact_tag)
             if found is None:
                 raise RuntimeError(f"Training did not produce a usable checkpoint for {obstacle_type}")
             current_model, current_normalize, label = found

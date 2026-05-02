@@ -21,6 +21,7 @@ import matplotlib
 matplotlib.use("Agg")
 
 import matplotlib.pyplot as plt
+from matplotlib.patches import Patch
 from matplotlib.ticker import FuncFormatter
 import numpy as np
 import pandas as pd
@@ -32,6 +33,86 @@ except Exception:  # pragma: no cover - optional runtime dependency
 
 
 FIGURES: list[str] = []
+RAW_LABELS: dict[str, str] = {}
+SHORT_LABELS: dict[str, str] = {}
+LEGEND_LABELS: dict[str, str] = {}
+
+OBSTACLE_LABELS = {
+    "crossing_spheres": "Пересекающиеся сферы",
+    "swinging_sticks": "Качающиеся палки",
+    "dynamic_mix": "Динамический микс",
+    "city_blocks": "Город",
+    "cylinders": "Цилиндры",
+    "spheres": "Сферы",
+    "beams": "Балки",
+    "walls": "Стены",
+    "gates": "Ворота",
+    "boxes": "Блоки",
+    "slalom": "slalom",
+    "empty": "Пустая карта",
+}
+
+PREFIX_LABELS = {
+    "success": "Успех",
+    "crash": "Авария",
+    "timeout": "Таймаут",
+    "contact": "Контакт",
+    "oob": "Вылет",
+}
+
+OUTCOME_LABELS = {
+    "success": "Успех",
+    "crash": "Авария",
+    "timeout": "Таймаут",
+}
+
+METRIC_LABELS = {
+    "action_smoothness": "Плавность действий",
+    "avg_heading_error": "Средняя ошибка направления",
+    "avg_speed": "Средняя скорость",
+    "boundary_dist": "Расстояние до границы",
+    "closest_obstacle": "Расстояние до препятствия",
+    "dist_to_goal": "Расстояние до цели",
+    "episode_length": "Длина эпизода",
+    "episode_reward": "Награда за эпизод",
+    "goal_seeking_ratio": "Доля движения к цели",
+    "hovering_time": "Доля зависания",
+    "min_goal_distance": "Минимальное расстояние до цели",
+    "path_efficiency": "Эффективность пути",
+    "progress_ratio": "Прогресс к цели",
+    "spinning_time": "Доля вращения",
+}
+
+REWARD_COMPONENT_LABELS = {
+    "boundary": "Граница арены",
+    "boundary_outward": "Движение наружу",
+    "efficiency_bonus": "Бонус эффективности",
+    "exploration": "Исследование",
+    "heading": "Направление на цель",
+    "near_goal_away": "Удаление рядом с целью",
+    "near_goal_boundary": "Граница рядом с целью",
+    "near_goal_capture": "Захват цели",
+    "near_goal_progress": "Прогресс рядом с целью",
+    "near_goal_speed": "Скорость рядом с целью",
+    "near_goal_stall": "Застревание рядом с целью",
+    "obstacle": "Близость препятствий",
+    "obstacle_approach": "Сближение с препятствием",
+    "obstacle_hard": "Опасная близость",
+    "progress": "Прогресс",
+    "proximity": "Близость к цели",
+    "smoothness": "Плавность",
+    "step_penalty": "Штраф за шаг",
+    "terminal": "Финальный исход",
+    "velocity": "Скорость",
+    "yaw_penalty": "Штраф поворота",
+}
+
+FAILURE_LABELS = {
+    "collision": "Столкновения",
+    "out_of_bounds": "Вылеты за границу",
+    "success": "Успехи",
+    "timeout": "Таймауты",
+}
 
 
 def repo_root() -> Path:
@@ -79,15 +160,35 @@ def numeric_columns(df: pd.DataFrame, columns: list[str]) -> pd.DataFrame:
     return df
 
 
-def maybe_filter_run(df: pd.DataFrame, run_filter: str) -> pd.DataFrame:
-    if not run_filter or df.empty:
+def filter_terms(value: str) -> list[str]:
+    return [item.strip().lower() for item in value.split(",") if item.strip()]
+
+
+def text_matches_filters(text: Any, include_filter: str, exclude_filter: str = "") -> bool:
+    haystack = str(text).lower()
+    include_terms = filter_terms(include_filter)
+    exclude_terms = filter_terms(exclude_filter)
+    if include_terms and not any(term in haystack for term in include_terms):
+        return False
+    return not any(term in haystack for term in exclude_terms)
+
+
+def maybe_filter_run(df: pd.DataFrame, run_filter: str, exclude_run_filter: str = "") -> pd.DataFrame:
+    if (not run_filter and not exclude_run_filter) or df.empty:
         return df
 
-    mask = pd.Series(False, index=df.index)
+    include_terms = filter_terms(run_filter)
+    exclude_terms = filter_terms(exclude_run_filter)
+    include_mask = pd.Series(not include_terms, index=df.index)
+    exclude_mask = pd.Series(False, index=df.index)
     for column in ("run_id", "log_name", "source", "event_file"):
         if column in df.columns:
-            mask = mask | df[column].astype(str).str.contains(run_filter, case=False, regex=False, na=False)
-    return df[mask].copy()
+            values = df[column].astype(str).str.lower()
+            for term in include_terms:
+                include_mask = include_mask | values.str.contains(term, regex=False, na=False)
+            for term in exclude_terms:
+                exclude_mask = exclude_mask | values.str.contains(term, regex=False, na=False)
+    return df[include_mask & ~exclude_mask].copy()
 
 
 def setup_style() -> None:
@@ -129,7 +230,97 @@ def format_training_step_axis(ax: plt.Axes) -> None:
     ax.xaxis.set_major_formatter(FuncFormatter(sci_tick))
 
 
+def readable_prefix(value: str) -> str:
+    key = value.strip().lower()
+    return PREFIX_LABELS.get(key, value.strip())
+
+
+def with_readable_prefix(prefix: str, label: str) -> str:
+    prefix = prefix.strip()
+    if not prefix:
+        return label
+    return f"{readable_prefix(prefix)} — {label}"
+
+
+def compact_group_label(value: Any) -> str:
+    raw = str(value)
+    if raw in RAW_LABELS:
+        return RAW_LABELS[raw]
+
+    lowered = raw.lower()
+    obstacle = next((short for key, short in OBSTACLE_LABELS.items() if key in lowered), None)
+    if obstacle is None:
+        obstacle = raw[:18]
+
+    tag = ""
+    tag_match = re.search(r"(rl\d*(?:_[A-Za-z0-9]+){1,2})", raw)
+    if tag_match:
+        tag = tag_match.group(1)
+    else:
+        stamps = re.findall(r"(\d{8})_(\d{6})", raw)
+        if stamps:
+            date, clock = stamps[-1]
+            tag = f"{date[4:8]}-{clock[:4]}"
+
+    base = f"{obstacle} ({tag})" if tag else obstacle
+    label = base
+    suffix = 2
+    while label in SHORT_LABELS and SHORT_LABELS[label] != raw:
+        label = f"{base}#{suffix}"
+        suffix += 1
+
+    RAW_LABELS[raw] = label
+    SHORT_LABELS[label] = raw
+    return label
+
+
+def collect_figure_legend(fig: plt.Figure) -> tuple[list[Any], list[str]]:
+    deduped: dict[str, Any] = {}
+    for ax in fig.axes:
+        handles, labels = ax.get_legend_handles_labels()
+        for handle, label in zip(handles, labels):
+            deduped.setdefault(label, handle)
+        existing = ax.get_legend()
+        if existing is not None:
+            existing.remove()
+
+    labels = list(deduped.keys())
+    handles = [deduped[label] for label in labels]
+    return handles, labels
+
+
+def legend_bottom_space(label_count: int, max_entries: int) -> float:
+    if label_count <= 0 or label_count > max_entries:
+        return 0.05
+    ncols = min(4, label_count)
+    nrows = math.ceil(label_count / ncols)
+    return min(0.34, 0.08 + nrows * 0.04)
+
+
+def place_figure_legend(fig: plt.Figure, handles: list[Any], labels: list[str], max_entries: int = 24) -> None:
+    if not handles or len(labels) > max_entries:
+        return
+
+    ncols = min(4, len(labels))
+    fig.legend(
+        handles,
+        labels,
+        loc="lower center",
+        bbox_to_anchor=(0.5, 0.012),
+        ncol=ncols,
+        frameon=False,
+        fontsize=7,
+    )
+
+
 def save_figure(fig: plt.Figure, out_dir: Path, stem: str, formats: list[str]) -> None:
+    handles, labels = collect_figure_legend(fig)
+    bottom = legend_bottom_space(len(labels), max_entries=24)
+    try:
+        fig.tight_layout(rect=(0.02, bottom, 0.98, 0.94), h_pad=2.8, w_pad=1.8)
+    except ValueError:
+        fig.subplots_adjust(left=0.08, right=0.98, top=0.90, bottom=bottom, hspace=0.55, wspace=0.30)
+    place_figure_legend(fig, handles, labels)
     for fmt in formats:
         path = out_dir / f"{stem}.{fmt}"
         fig.savefig(path, bbox_inches="tight")
@@ -158,13 +349,14 @@ def plot_grouped_lines(
     for group_name, part in df.dropna(subset=[x, y]).groupby(group, dropna=False):
         part = part.sort_values(x)
         y_values = smooth_series(part[y].astype(float), smooth)
-        label = str(group_name)
+        label = compact_group_label(group_name)
         if label_prefix:
-            label = f"{label_prefix}{label}"
+            label = with_readable_prefix(label_prefix, label)
+        LEGEND_LABELS[label] = with_readable_prefix(label_prefix, str(group_name)) if label_prefix else str(group_name)
         ax.plot(part[x], y_values, marker="o" if len(part) < 30 else None, linewidth=1.8, label=label)
 
 
-def load_eval_history(eval_dir: Path, run_filter: str) -> pd.DataFrame:
+def load_eval_history(eval_dir: Path, run_filter: str, exclude_run_filter: str = "") -> pd.DataFrame:
     rows: list[dict[str, Any]] = []
     for path in sorted(eval_dir.glob("**/eval_history.jsonl")):
         for row in read_jsonl(path):
@@ -193,16 +385,21 @@ def load_eval_history(eval_dir: Path, run_filter: str) -> pd.DataFrame:
     )
     if "run_id" not in df.columns:
         df["run_id"] = df["log_name"]
-    return maybe_filter_run(df, run_filter)
+    return maybe_filter_run(df, run_filter, exclude_run_filter)
 
 
-def load_diagnostics(diagnostics_dir: Path, run_filter: str, max_episode_rows: int) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+def load_diagnostics(
+    diagnostics_dir: Path,
+    run_filter: str,
+    exclude_run_filter: str,
+    max_episode_rows: int,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     milestone_rows: list[dict[str, Any]] = []
     episode_rows: list[dict[str, Any]] = []
     summary_rows: list[dict[str, Any]] = []
 
     for run_dir in sorted(path for path in diagnostics_dir.glob("*") if path.is_dir()):
-        if run_filter and run_filter.lower() not in run_dir.name.lower():
+        if not text_matches_filters(run_dir.name, run_filter, exclude_run_filter):
             continue
 
         for row in read_jsonl(run_dir / "milestones.jsonl"):
@@ -270,10 +467,14 @@ def load_diagnostics(diagnostics_dir: Path, run_filter: str, max_episode_rows: i
     return milestones, episodes, summaries
 
 
-def load_curriculum_reports(reports_dir: Path, run_filter: str) -> pd.DataFrame:
+def load_curriculum_reports(reports_dir: Path, run_filter: str, exclude_run_filter: str = "") -> pd.DataFrame:
     rows: list[dict[str, Any]] = []
+    apply_run_filter = (
+        bool(run_filter)
+        and reports_dir.resolve() == (repo_root() / "reports" / "curriculum").resolve()
+    )
     for path in sorted(reports_dir.glob("**/eval_*.json")):
-        if run_filter and run_filter.lower() not in str(path).lower():
+        if apply_run_filter and not text_matches_filters(path, run_filter, exclude_run_filter):
             continue
         try:
             with path.open("r", encoding="utf-8") as fh:
@@ -306,13 +507,13 @@ def load_curriculum_reports(reports_dir: Path, run_filter: str) -> pd.DataFrame:
     )
 
 
-def load_tensorboard_scalars(logs_dir: Path, run_filter: str) -> pd.DataFrame:
+def load_tensorboard_scalars(logs_dir: Path, run_filter: str, exclude_run_filter: str = "") -> pd.DataFrame:
     if event_accumulator is None:
         return pd.DataFrame()
 
     rows: list[dict[str, Any]] = []
     for event_file in sorted(logs_dir.glob("**/events.out.tfevents.*")):
-        if run_filter and run_filter.lower() not in str(event_file).lower():
+        if not text_matches_filters(event_file, run_filter, exclude_run_filter):
             continue
         try:
             accumulator = event_accumulator.EventAccumulator(
@@ -349,34 +550,33 @@ def plot_eval_history(df: pd.DataFrame, out_dir: Path, formats: list[str], smoot
 
     group = "run_id" if "run_id" in df.columns else "log_name"
     fig, axes = plt.subplots(2, 2, figsize=(13, 8), sharex=True)
-    plot_grouped_lines(axes[0, 0], df, "timesteps", "success_rate", group, smooth)
+    plot_grouped_lines(axes[0, 0], df, "timesteps", "success_rate", group, smooth, "success ")
     plot_grouped_lines(axes[0, 0], df, "timesteps", "crash_rate", group, smooth, "crash ")
     plot_grouped_lines(axes[0, 0], df, "timesteps", "timeout_rate", group, smooth, "timeout ")
-    axes[0, 0].set_title("Evaluation outcomes")
-    axes[0, 0].set_ylabel("rate")
+    axes[0, 0].set_title("Результаты контрольной оценки")
+    axes[0, 0].set_ylabel("Доля эпизодов")
     axes[0, 0].set_ylim(-0.03, 1.03)
 
     plot_grouped_lines(axes[0, 1], df, "timesteps", "mean_reward", group, smooth)
-    axes[0, 1].set_title("Evaluation mean reward")
-    axes[0, 1].set_ylabel("reward")
+    axes[0, 1].set_title("Средняя награда на оценке")
+    axes[0, 1].set_ylabel("Награда")
 
     plot_grouped_lines(axes[1, 0], df, "timesteps", "mean_ep_length", group, smooth)
-    axes[1, 0].set_title("Evaluation episode length")
-    axes[1, 0].set_ylabel("steps")
-    axes[1, 0].set_xlabel("training steps")
+    axes[1, 0].set_title("Средняя длина эпизода на оценке")
+    axes[1, 0].set_ylabel("Шаги среды")
+    axes[1, 0].set_xlabel("Шаги обучения")
 
     if "crash_contact" in df.columns:
         plot_grouped_lines(axes[1, 1], df, "timesteps", "crash_contact", group, smooth, "contact ")
     if "crash_out_of_bounds" in df.columns:
         plot_grouped_lines(axes[1, 1], df, "timesteps", "crash_out_of_bounds", group, smooth, "oob ")
-    axes[1, 1].set_title("Evaluation crash breakdown")
-    axes[1, 1].set_ylabel("episodes")
-    axes[1, 1].set_xlabel("training steps")
+    axes[1, 1].set_title("Причины аварий на оценке")
+    axes[1, 1].set_ylabel("Количество эпизодов")
+    axes[1, 1].set_xlabel("Шаги обучения")
 
     for ax in axes.ravel():
         format_training_step_axis(ax)
-        ax.legend(loc="best")
-    fig.suptitle("Periodic evaluation metrics", y=1.02)
+    fig.suptitle("Периодическая оценка модели", y=1.02)
     save_figure(fig, out_dir, "01_eval_history", formats)
 
 
@@ -388,40 +588,39 @@ def plot_milestones(df: pd.DataFrame, out_dir: Path, formats: list[str], smooth:
     plot_grouped_lines(axes[0, 0], df, "timesteps", "rates_success", "run_id", smooth, "success ")
     plot_grouped_lines(axes[0, 0], df, "timesteps", "rates_crash", "run_id", smooth, "crash ")
     plot_grouped_lines(axes[0, 0], df, "timesteps", "rates_timeout", "run_id", smooth, "timeout ")
-    axes[0, 0].set_title("Rolling training outcomes")
-    axes[0, 0].set_ylabel("rate")
+    axes[0, 0].set_title("Исходы эпизодов в обучении")
+    axes[0, 0].set_ylabel("Доля эпизодов")
     axes[0, 0].set_ylim(-0.03, 1.03)
 
     plot_grouped_lines(axes[0, 1], df, "timesteps", "means_reward", "run_id", smooth)
-    axes[0, 1].set_title("Rolling episode reward")
-    axes[0, 1].set_ylabel("reward")
+    axes[0, 1].set_title("Средняя награда за эпизод")
+    axes[0, 1].set_ylabel("Награда")
 
     plot_grouped_lines(axes[1, 0], df, "timesteps", "means_progress_ratio", "run_id", smooth)
-    axes[1, 0].set_title("Rolling path progress")
-    axes[1, 0].set_ylabel("progress ratio")
+    axes[1, 0].set_title("Прогресс к цели")
+    axes[1, 0].set_ylabel("Доля пройденного пути")
     axes[1, 0].set_ylim(-0.03, 1.03)
-    axes[1, 0].set_xlabel("training steps")
+    axes[1, 0].set_xlabel("Шаги обучения")
 
     plot_grouped_lines(axes[1, 1], df, "timesteps", "means_dist_to_goal", "run_id", smooth)
-    axes[1, 1].set_title("Rolling final distance to goal")
-    axes[1, 1].set_ylabel("meters")
-    axes[1, 1].set_xlabel("training steps")
+    axes[1, 1].set_title("Финальное расстояние до цели")
+    axes[1, 1].set_ylabel("Метры")
+    axes[1, 1].set_xlabel("Шаги обучения")
 
     for ax in axes.ravel():
         format_training_step_axis(ax)
-        ax.legend(loc="best")
-    fig.suptitle("Structured diagnostics rolling windows", y=1.02)
+    fig.suptitle("Диагностика обучения по скользящему окну", y=1.02)
     save_figure(fig, out_dir, "02_training_milestones", formats)
 
 
-def plot_tensorboard(df: pd.DataFrame, out_dir: Path, formats: list[str], smooth: int) -> None:
+def plot_tensorboard(df: pd.DataFrame, out_dir: Path, formats: list[str], smooth: int, plot_set: str) -> None:
     if df.empty:
         return
 
-    tag_sets = [
+    full_only_tag_sets = [
         (
             "03_policy_losses",
-            "Policy optimization losses",
+            "Потери и ограничения PPO",
             [
                 "train/policy_gradient_loss",
                 "train/value_loss",
@@ -433,7 +632,7 @@ def plot_tensorboard(df: pd.DataFrame, out_dir: Path, formats: list[str], smooth
         ),
         (
             "04_optimization_diagnostics",
-            "Optimization diagnostics",
+            "Диагностика оптимизации PPO",
             [
                 "train/explained_variance",
                 "train/std",
@@ -444,20 +643,67 @@ def plot_tensorboard(df: pd.DataFrame, out_dir: Path, formats: list[str], smooth
             ],
         ),
     ]
+    core_tag_sets = [
+        (
+            "10_rl_reward_success_curves",
+            "Награда и исходы обучения",
+            [
+                "rollout/ep_rew_mean",
+                "eval/mean_reward",
+                "rollout/success_rate",
+                "eval/success_rate",
+                "eval/crash_rate",
+                "eval/timeout_rate",
+            ],
+        ),
+        (
+            "11_rl_loss_kl_entropy_curves",
+            "Потери, KL-дивергенция и качество критика",
+            [
+                "train/loss",
+                "train/policy_gradient_loss",
+                "train/value_loss",
+                "train/entropy_loss",
+                "train/approx_kl",
+                "train/explained_variance",
+            ],
+        ),
+        (
+            "12_rl_policy_update_runtime_curves",
+            "Обновление политики и скорость обучения",
+            [
+                "train/std",
+                "train/clip_fraction",
+                "train/clip_range",
+                "train/learning_rate",
+                "rollout/ep_len_mean",
+                "eval/mean_ep_length",
+                "time/fps",
+            ],
+        ),
+    ]
+    tag_sets = full_only_tag_sets + core_tag_sets if plot_set == "full" else core_tag_sets
 
     labels = {
-        "train/policy_gradient_loss": "policy gradient loss",
-        "train/value_loss": "value loss",
-        "train/entropy_loss": "entropy loss",
-        "train/loss": "total loss",
-        "train/approx_kl": "approx KL",
-        "train/clip_fraction": "clip fraction",
-        "train/explained_variance": "explained variance",
-        "train/std": "policy std",
-        "train/learning_rate": "learning rate",
-        "rollout/ep_rew_mean": "rollout reward mean",
-        "rollout/ep_len_mean": "rollout length mean",
-        "time/fps": "fps",
+        "train/policy_gradient_loss": "Потеря политики",
+        "train/value_loss": "Потеря критика",
+        "train/entropy_loss": "Потеря энтропии",
+        "train/loss": "Общая потеря",
+        "train/approx_kl": "Приближенная KL-дивергенция",
+        "train/clip_fraction": "Доля обрезанных обновлений",
+        "train/clip_range": "Порог обрезки PPO",
+        "train/explained_variance": "Объясненная дисперсия критика",
+        "train/std": "Стандартное отклонение политики",
+        "train/learning_rate": "Скорость обучения",
+        "rollout/ep_rew_mean": "Средняя награда в обучении",
+        "rollout/ep_len_mean": "Средняя длина эпизода в обучении",
+        "rollout/success_rate": "Доля успехов в обучении",
+        "eval/mean_reward": "Средняя награда на оценке",
+        "eval/success_rate": "Доля успехов на оценке",
+        "eval/crash_rate": "Доля аварий на оценке",
+        "eval/timeout_rate": "Доля таймаутов на оценке",
+        "eval/mean_ep_length": "Средняя длина эпизода на оценке",
+        "time/fps": "Скорость симуляции, FPS",
     }
 
     for stem, title, tags in tag_sets:
@@ -472,10 +718,9 @@ def plot_tensorboard(df: pd.DataFrame, out_dir: Path, formats: list[str], smooth
             part = df[df["tag"] == tag].copy()
             plot_grouped_lines(ax, part, "step", "value", "log_name", smooth)
             ax.set_title(labels.get(tag, tag))
-            ax.set_xlabel("training steps")
-            ax.set_ylabel("value")
+            ax.set_xlabel("Шаги обучения")
+            ax.set_ylabel("Значение")
             format_training_step_axis(ax)
-            ax.legend(loc="best")
         for ax in axes.ravel()[len(present):]:
             ax.axis("off")
         fig.suptitle(title, y=1.01)
@@ -494,14 +739,20 @@ def plot_reward_components(summary_df: pd.DataFrame, out_dir: Path, formats: lis
 
     values = summary_df[component_cols].mean(numeric_only=True).sort_values(key=lambda s: s.abs(), ascending=False)
     values = values.head(18)
-    labels = [col[len(prefix):] for col in values.index]
+    labels = [REWARD_COMPONENT_LABELS.get(col[len(prefix):], col[len(prefix):]) for col in values.index]
 
     fig, ax = plt.subplots(figsize=(11, 7))
     colors = ["#2b8a3e" if value >= 0 else "#c92a2a" for value in values]
     ax.barh(labels[::-1], values.iloc[::-1], color=colors[::-1])
     ax.axvline(0, color="black", linewidth=0.8)
-    ax.set_title("Mean reward component contribution")
-    ax.set_xlabel("mean reward per step / terminal component")
+    ax.legend(
+        handles=[
+            Patch(facecolor="#2b8a3e", label="Положительный вклад"),
+            Patch(facecolor="#c92a2a", label="Отрицательный вклад"),
+        ]
+    )
+    ax.set_title("Средний вклад компонентов награды")
+    ax.set_xlabel("Средний вклад компонента")
     save_figure(fig, out_dir, "05_reward_components", formats)
 
 
@@ -515,7 +766,7 @@ def plot_failure_breakdown(summary_df: pd.DataFrame, out_dir: Path, formats: lis
         return
 
     data = summary_df.set_index("run_id")[cols].copy()
-    data.columns = [col[len(prefix):] for col in cols]
+    data.columns = [FAILURE_LABELS.get(col[len(prefix):], col[len(prefix):]) for col in cols]
     data = data.fillna(0)
     keep = [col for col in data.columns if data[col].sum() > 0]
     if not keep:
@@ -530,10 +781,9 @@ def plot_failure_breakdown(summary_df: pd.DataFrame, out_dir: Path, formats: lis
         ax.bar(x, values, bottom=bottom, label=col)
         bottom += values
     ax.set_xticks(x)
-    ax.set_xticklabels(data.index, rotation=30, ha="right")
-    ax.set_title("Failure reason breakdown")
-    ax.set_ylabel("episodes")
-    ax.legend(loc="best")
+    ax.set_xticklabels([compact_group_label(item) for item in data.index], rotation=20, ha="right")
+    ax.set_title("Распределение причин завершения эпизода")
+    ax.set_ylabel("Количество эпизодов")
     save_figure(fig, out_dir, "06_failure_breakdown", formats)
 
 
@@ -548,30 +798,31 @@ def plot_episode_cloud(episodes_df: pd.DataFrame, out_dir: Path, formats: list[s
     }
     fig, axes = plt.subplots(2, 2, figsize=(13, 8), sharex=True)
     metrics = [
-        ("progress_ratio", "Progress ratio"),
-        ("dist_to_goal", "Final distance to goal"),
-        ("closest_obstacle", "Closest obstacle distance"),
-        ("avg_heading_error", "Average heading error"),
+        ("progress_ratio", "Прогресс к цели"),
+        ("dist_to_goal", "Финальное расстояние до цели"),
+        ("closest_obstacle", "Минимальная дистанция до препятствия"),
+        ("avg_heading_error", "Средняя ошибка направления"),
     ]
     for ax, (metric, title) in zip(axes.ravel(), metrics):
         if metric not in episodes_df.columns:
             ax.axis("off")
             continue
         for outcome, part in episodes_df.groupby("outcome"):
+            label = OUTCOME_LABELS.get(str(outcome), str(outcome))
+            LEGEND_LABELS[label] = str(outcome)
             ax.scatter(
                 part["timesteps"],
                 part[metric],
                 s=14,
                 alpha=0.55,
-                label=str(outcome),
+                label=label,
                 color=colors.get(str(outcome), "#495057"),
             )
         ax.set_title(title)
-        ax.set_xlabel("training steps")
-        ax.set_ylabel(metric)
+        ax.set_xlabel("Шаги обучения")
+        ax.set_ylabel(METRIC_LABELS.get(metric, metric))
         format_training_step_axis(ax)
-        ax.legend(loc="best")
-    fig.suptitle("Episode-level diagnostics", y=1.02)
+    fig.suptitle("Диагностика отдельных эпизодов", y=1.02)
     save_figure(fig, out_dir, "07_episode_diagnostics", formats)
 
 
@@ -606,15 +857,29 @@ def plot_behavior_by_outcome(summary_df: pd.DataFrame, out_dir: Path, formats: l
         return
 
     fig, axes = plt.subplots(2, 4, figsize=(15, 7))
+    outcome_colors = {
+        "success": "#2b8a3e",
+        "crash": "#c92a2a",
+        "timeout": "#f08c00",
+    }
     for ax, metric in zip(axes.ravel(), metrics):
         part = data[data["metric"] == metric]
         if part.empty:
             ax.axis("off")
             continue
-        ax.bar(part["outcome"], part["value"], color=["#2b8a3e", "#c92a2a", "#f08c00"][:len(part)])
-        ax.set_title(metric)
+        labels = [OUTCOME_LABELS.get(str(outcome), str(outcome)) for outcome in part["outcome"]]
+        colors = [outcome_colors.get(str(outcome), "#495057") for outcome in part["outcome"]]
+        ax.bar(labels, part["value"], color=colors)
+        ax.set_title(METRIC_LABELS.get(metric, metric))
         ax.tick_params(axis="x", rotation=25)
-    fig.suptitle("Behavior metrics grouped by outcome", y=1.02)
+    axes.ravel()[0].legend(
+        handles=[
+            Patch(facecolor="#2b8a3e", label="Успех"),
+            Patch(facecolor="#c92a2a", label="Авария"),
+            Patch(facecolor="#f08c00", label="Таймаут"),
+        ]
+    )
+    fig.suptitle("Поведение агента по исходам эпизода", y=1.02)
     save_figure(fig, out_dir, "08_behavior_by_outcome", formats)
 
 
@@ -629,20 +894,20 @@ def plot_curriculum_reports(reports_df: pd.DataFrame, out_dir: Path, formats: li
     last = reports_df.sort_values("order").groupby("obstacle_type", as_index=False).tail(1)
 
     fig, axes = plt.subplots(1, 2, figsize=(14, 5))
-    axes[0].bar(last["obstacle_type"], last["success_rate"], color="#1c7ed6")
+    obstacle_labels = [OBSTACLE_LABELS.get(str(item), str(item)) for item in last["obstacle_type"]]
+    axes[0].bar(obstacle_labels, last["success_rate"], color="#1c7ed6", label="Успехи")
     axes[0].set_ylim(0, 1)
-    axes[0].set_title("Final curriculum success by obstacle")
-    axes[0].set_ylabel("success rate")
+    axes[0].set_title("Итоговая успешность по картам")
+    axes[0].set_ylabel("Доля успешных эпизодов")
     axes[0].tick_params(axis="x", rotation=35)
 
-    for metric, label in [("crash_rate", "crash"), ("timeout_rate", "timeout")]:
+    for metric, label in [("crash_rate", "Аварии"), ("timeout_rate", "Таймауты")]:
         if metric in last.columns:
-            axes[1].plot(last["obstacle_type"], last[metric], marker="o", label=label)
+            axes[1].plot(obstacle_labels, last[metric], marker="o", label=label)
     axes[1].set_ylim(0, 1)
-    axes[1].set_title("Final curriculum failure rates")
-    axes[1].set_ylabel("rate")
+    axes[1].set_title("Итоговые неуспешные исходы")
+    axes[1].set_ylabel("Доля эпизодов")
     axes[1].tick_params(axis="x", rotation=35)
-    axes[1].legend(loc="best")
     save_figure(fig, out_dir, "09_curriculum_obstacle_summary", formats)
 
 
@@ -654,7 +919,16 @@ def write_overview(
     summaries_df: pd.DataFrame,
     tb_df: pd.DataFrame,
     reports_df: pd.DataFrame,
+    plot_set: str,
 ) -> None:
+    if LEGEND_LABELS:
+        pd.DataFrame(
+            [
+                {"short_label": short, "full_label": full}
+                for short, full in sorted(LEGEND_LABELS.items())
+            ]
+        ).to_csv(out_dir / "legend_labels.csv", index=False)
+
     lines = [
         "# Training Plot Report",
         "",
@@ -689,11 +963,21 @@ def write_overview(
     lines.extend([
         "",
         "## Notes for thesis use",
+        "- Plot legends are kept outside the plotting area. If a figure has too many series, the plot is left clean and labels are written to legend_labels.csv.",
+        f"- Plot set: {plot_set}. Full mode writes the complete diagnostics set; compact mode is available only for temporary quick previews.",
         "- 01_eval_history: success/crash/timeout and reward during periodic evaluation.",
-        "- 03_policy_losses and 04_optimization_diagnostics: PPO optimization signals from TensorBoard.",
-        "- 05_reward_components: reward shaping contribution sanity check.",
-        "- 07_episode_diagnostics and 08_behavior_by_outcome: navigation behavior and failure analysis.",
+        "- 02_training_milestones: rolling success/crash/timeout, reward, progress, and final distance during training.",
+        "- 10_rl_reward_success_curves: rollout/eval reward and success/failure dynamics.",
+        "- 11_rl_loss_kl_entropy_curves: total loss, policy loss, value loss, entropy loss, KL, and explained variance.",
+        "- 12_rl_policy_update_runtime_curves: policy std, clipping, learning rate, episode length, and FPS.",
     ])
+    if plot_set == "full":
+        lines.extend([
+            "- 03_policy_losses and 04_optimization_diagnostics: extra PPO optimization signals from TensorBoard.",
+            "- 05_reward_components: reward shaping contribution sanity check.",
+            "- 06_failure_breakdown: final failure reason breakdown.",
+            "- 07_episode_diagnostics and 08_behavior_by_outcome: navigation behavior and failure analysis.",
+        ])
     (out_dir / "README.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
@@ -728,7 +1012,10 @@ def main() -> None:
     parser.add_argument("--reports-dir", default="reports/training_plots")
     parser.add_argument("--tag", default=None)
     parser.add_argument("--run-filter", default="")
+    parser.add_argument("--exclude-run-filter", default="")
     parser.add_argument("--formats", default="png,svg")
+    parser.add_argument("--plot-set", choices=["compact", "full"], default="full",
+                        help="full: complete diagnostics set; compact: only core learning curves for quick previews")
     parser.add_argument("--smooth-window", type=int, default=3)
     parser.add_argument("--max-episode-rows", type=int, default=200_000)
     args = parser.parse_args()
@@ -741,25 +1028,27 @@ def main() -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
     formats = parse_csv(args.formats) or ["png"]
 
-    eval_df = load_eval_history(root / args.eval_dir, args.run_filter)
+    eval_df = load_eval_history(root / args.eval_dir, args.run_filter, args.exclude_run_filter)
     milestones_df, episodes_df, summaries_df = load_diagnostics(
         root / args.diagnostics_dir,
         args.run_filter,
+        args.exclude_run_filter,
         max_episode_rows=args.max_episode_rows,
     )
-    tb_df = load_tensorboard_scalars(root / args.logs_dir, args.run_filter)
-    reports_df = load_curriculum_reports(root / args.curriculum_reports_dir, args.run_filter)
+    tb_df = load_tensorboard_scalars(root / args.logs_dir, args.run_filter, args.exclude_run_filter)
+    reports_df = load_curriculum_reports(root / args.curriculum_reports_dir, args.run_filter, args.exclude_run_filter)
 
     save_csvs(out_dir, eval_df, milestones_df, episodes_df, summaries_df, tb_df, reports_df)
     plot_eval_history(eval_df, out_dir, formats, args.smooth_window)
     plot_milestones(milestones_df, out_dir, formats, args.smooth_window)
-    plot_tensorboard(tb_df, out_dir, formats, args.smooth_window)
-    plot_reward_components(summaries_df, out_dir, formats)
-    plot_failure_breakdown(summaries_df, out_dir, formats)
-    plot_episode_cloud(episodes_df, out_dir, formats)
-    plot_behavior_by_outcome(summaries_df, out_dir, formats)
+    plot_tensorboard(tb_df, out_dir, formats, args.smooth_window, args.plot_set)
+    if args.plot_set == "full":
+        plot_reward_components(summaries_df, out_dir, formats)
+        plot_failure_breakdown(summaries_df, out_dir, formats)
+        plot_episode_cloud(episodes_df, out_dir, formats)
+        plot_behavior_by_outcome(summaries_df, out_dir, formats)
     plot_curriculum_reports(reports_df, out_dir, formats)
-    write_overview(out_dir, eval_df, milestones_df, episodes_df, summaries_df, tb_df, reports_df)
+    write_overview(out_dir, eval_df, milestones_df, episodes_df, summaries_df, tb_df, reports_df, args.plot_set)
 
     print(f"[PLOTS] Saved report to: {out_dir}")
     for figure in FIGURES:

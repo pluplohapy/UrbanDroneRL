@@ -1339,6 +1339,10 @@ def main():
                         help='Disable structured diagnostics logs')
     parser.add_argument('--diag-dir', type=str, default='logs/training_diagnostics',
                         help='Directory for structured diagnostics logs')
+    parser.add_argument('--run-tag', type=str, default='',
+                        help='Optional suffix for TensorBoard/eval/diagnostics logs; checkpoint names stay unchanged')
+    parser.add_argument('--artifact-tag', type=str, default='',
+                        help='Optional suffix for model/checkpoint artifacts to avoid overwriting existing runs')
     parser.add_argument('--diag-sample-every', type=int, default=10,
                         help='Write every Nth successful episode to compact diagnostics stream')
     parser.add_argument('--diag-window', type=int, default=100,
@@ -1535,6 +1539,24 @@ def main():
             normalize_path = f"{normalize_path}{swarm_suffix}"
         log_name = f"{log_name}{swarm_suffix}"
 
+    raw_artifact_tag = str(args.artifact_tag or "").strip()
+    safe_artifact_tag = "".join(ch if ch.isalnum() or ch in "._-" else "_" for ch in raw_artifact_tag).strip("_")
+    if safe_artifact_tag:
+        artifact_suffix = f"_{safe_artifact_tag}"
+        model_path = f"{model_path}{artifact_suffix}"
+        if normalize_path.endswith(".pkl"):
+            normalize_path = normalize_path[:-4] + f"{artifact_suffix}.pkl"
+        else:
+            normalize_path = f"{normalize_path}{artifact_suffix}"
+        log_name = f"{log_name}{artifact_suffix}"
+
+    raw_run_tag = str(args.run_tag or "").strip()
+    safe_run_tag = "".join(ch if ch.isalnum() or ch in "._-" else "_" for ch in raw_run_tag).strip("_")
+    if safe_run_tag and not log_name.endswith(f"_{safe_run_tag}"):
+        log_run_name = f"{log_name}_{safe_run_tag}"
+    else:
+        log_run_name = log_name
+
     # Print configuration
     print("=" * 60)
     print(f"DRONE NAVIGATION TRAINING - STAGE {stage.upper()}")
@@ -1572,6 +1594,10 @@ def main():
         print(f"  Watch FPS: {args.watch_fps}")
     print(f"  Arena: {config.ARENA_SIZE_X}x{config.ARENA_SIZE_Y}x{config.ARENA_HEIGHT}m")
     print(f"  Model path: {model_path}")
+    if safe_artifact_tag:
+        print(f"  Artifact tag: {safe_artifact_tag}")
+    if log_run_name != log_name:
+        print(f"  Log run name: {log_run_name}")
 
     if use_planner:
         print(f"\n[CONFIG] RRT* Planner Parameters (OPTIMIZED):")
@@ -1713,7 +1739,7 @@ def main():
     diag_logger = TrainingDiagnosticsLogger(
         enabled=args.diag,
         base_dir=args.diag_dir,
-        run_name=log_name,
+        run_name=log_run_name,
         stage=stage,
         use_planner=use_planner,
         config=config,
@@ -1762,7 +1788,7 @@ def main():
     last_model_dir = os.path.join("models", "last_checkpoints", log_name)
     last_model_path = os.path.join(last_model_dir, "last_model")
     last_normalize_path = os.path.join(last_model_dir, "last_model_vecnormalize.pkl")
-    eval_log_dir = os.path.join("logs", "eval", log_name)
+    eval_log_dir = os.path.join("logs", "eval", log_run_name)
 
     if args.eval_enabled:
         print("\n[EVAL] Setting up periodic evaluation...")
@@ -1856,7 +1882,7 @@ def main():
             callback=callbacks,
             progress_bar=False,
             reset_num_timesteps=False,
-            tb_log_name=log_name
+            tb_log_name=log_run_name
         )
         print("\n" + "-" * 60)
         print("✓ Training completed")

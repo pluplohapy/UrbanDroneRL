@@ -41,11 +41,12 @@ PRETRAIN_BIDIRECTIONAL_GOALS = False  # Fast-repro mode: learn the original -Y -
 USE_PLANNER = False
 
 # ===== SIM DRONE CONTROL =====
-# Slightly faster than the original CF2X training setup (1.5x):
-# old 1.2/1.2/0.8 m/s and 0.8 rad/s -> 1.8/1.8/1.2 and 1.2.
-VX_MAX = 1.8
-VY_MAX = 1.8
-VZ_MAX = 1.2
+# Moderate speed-up from the original training caps. Full CF2X unlock
+# (8.33 m/s per axis) made scratch learning collapse into early crashes, so
+# this run uses 2x the old stable caps: 1.2/1.2/0.8 -> 2.4/2.4/1.6 m/s.
+VX_MAX = 2.4
+VY_MAX = 2.4
+VZ_MAX = 1.6
 YAW_RATE_MAX = 1.2
 MAX_COMMAND_SPEED = 0.0
 VELOCITY_TARGET_LOOKAHEAD_STEPS = 3.0
