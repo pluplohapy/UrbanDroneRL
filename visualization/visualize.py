@@ -24,7 +24,7 @@ from scenarios.stage0_empty import Stage0Scenario
 from scenarios.stage1_static import Stage1Scenario
 from scenarios.stage_pretrain import StagePretrainScenario
 from envs.visualization_utils import draw_arena_boundaries, draw_goal_marker
-from config import load_config
+from config import load_config, apply_pretrain_obstacle_overrides
 from config.runtime_sync import sync_runtime_config
 
 
@@ -42,6 +42,8 @@ PRETRAIN_OBSTACLE_CHOICES = (
     "gates",
     "slalom",
     "city_blocks",
+    "city_dynamic",
+    "construction_site_dynamic",
     "swinging_sticks",
 )
 
@@ -71,6 +73,19 @@ def predict_with_optional_state(model, obs, deterministic: bool, lstm_states=Non
 
     action, _ = model.predict(obs, deterministic=deterministic)
     return action, None
+
+
+def _is_pybullet_disconnect_error(exc: Exception) -> bool:
+    """Return True when PyBullet was closed by the GUI window."""
+    return "Not connected to physics server" in str(exc)
+
+
+def _visualization_client_connected(env) -> bool:
+    """Check the underlying PyBullet client used by the wrapped env."""
+    try:
+        return bool(p.isConnected(env.envs[0].CLIENT))
+    except Exception:
+        return False
 
 
 def visualize_flight(model_path="models/ppo_drone_nav_test",
@@ -105,6 +120,8 @@ def visualize_flight(model_path="models/ppo_drone_nav_test",
 
     stage_key = 'pretrain' if stage == 'pretrain' else str(stage)
     stage_config = load_config(stage_key)
+    if stage == 'pretrain':
+        stage_config = apply_pretrain_obstacle_overrides(stage_config, obstacle_type)
     # Shield mode for visualization can be controlled independently from training defaults.
     stage_config.SAFETY_SHIELD_ENABLED = bool(safety_shield)
     sync_runtime_config(stage_config)
@@ -158,7 +175,11 @@ def visualize_flight(model_path="models/ppo_drone_nav_test",
     print("\n" + "-" * 60)
 
     # Run episodes
+    stop_visualization = False
     for episode in range(n_episodes):
+        if stop_visualization:
+            break
+
         obs = env.reset()
         episode_reward = 0
         step = 0
@@ -192,6 +213,11 @@ def visualize_flight(model_path="models/ppo_drone_nav_test",
         episode_starts = np.ones((env.num_envs,), dtype=bool)
 
         while not done:
+            if not _visualization_client_connected(env):
+                print("\n[INFO] PyBullet window closed; stopping visualization.")
+                stop_visualization = True
+                break
+
             # Get action from model
             action, lstm_states = predict_with_optional_state(
                 model,
@@ -203,8 +229,15 @@ def visualize_flight(model_path="models/ppo_drone_nav_test",
             actions_log.append(action[0].copy())
 
             # Get current state BEFORE step
-            curr_pos = env.envs[0]._getDroneStateVector(0)[:3]
-            curr_vel = env.envs[0]._getDroneStateVector(0)[10:13]
+            try:
+                curr_pos = env.envs[0]._getDroneStateVector(0)[:3]
+                curr_vel = env.envs[0]._getDroneStateVector(0)[10:13]
+            except p.error as exc:
+                if _is_pybullet_disconnect_error(exc):
+                    print("\n[INFO] PyBullet window closed; stopping visualization.")
+                    stop_visualization = True
+                    break
+                raise
             trajectory.append(curr_pos.copy())
             velocities_log.append(curr_vel.copy())
 
@@ -230,7 +263,14 @@ def visualize_flight(model_path="models/ppo_drone_nav_test",
                       f"Vel: [{curr_vel[0]:5.2f}, {curr_vel[1]:5.2f}, {curr_vel[2]:5.2f}]")
 
             # Step environment
-            step_result = env.step(action)
+            try:
+                step_result = env.step(action)
+            except p.error as exc:
+                if _is_pybullet_disconnect_error(exc):
+                    print("\n[INFO] PyBullet window closed; stopping visualization.")
+                    stop_visualization = True
+                    break
+                raise
 
             # Check what step returns (old API: 4 values, new API: 5 values)
             if len(step_result) == 5:
@@ -326,7 +366,11 @@ def visualize_flight(model_path="models/ppo_drone_nav_test",
                     print("\n  Next episode in 2 seconds...")
                     time.sleep(2)
 
-    env.close()
+    try:
+        env.close()
+    except p.error as exc:
+        if not _is_pybullet_disconnect_error(exc):
+            raise
     print("\n" + "=" * 60)
     print("VISUALIZATION FINISHED")
     print("=" * 60)

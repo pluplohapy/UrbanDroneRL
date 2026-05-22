@@ -27,7 +27,7 @@ from envs.nav_aviary_planner import NavAviaryWithPlanner
 from scenarios.stage0_empty import Stage0Scenario
 from scenarios.stage1_static import Stage1Scenario
 from scenarios.stage_pretrain import StagePretrainScenario
-from config import load_config
+from config import load_config, apply_pretrain_obstacle_overrides
 from config.runtime_sync import sync_runtime_config
 
 
@@ -45,6 +45,8 @@ PRETRAIN_OBSTACLE_CHOICES = (
     "gates",
     "slalom",
     "city_blocks",
+    "city_dynamic",
+    "construction_site_dynamic",
     "swinging_sticks",
 )
 
@@ -264,6 +266,8 @@ def main():
         parser.error("--planner is not supported for stage pretrain")
 
     config = load_config(args.stage)
+    if args.stage == "pretrain":
+        config = apply_pretrain_obstacle_overrides(config, args.obstacle_type)
     shield_enabled = bool(args.safety_shield)
     config.SAFETY_SHIELD_ENABLED = shield_enabled
     sync_runtime_config(config)

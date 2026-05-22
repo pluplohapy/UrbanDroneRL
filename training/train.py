@@ -44,7 +44,7 @@ from envs.nav_aviary import NavAviary
 from envs.nav_aviary_planner import NavAviaryWithPlanner
 from scenarios.stage0_empty import Stage0Scenario
 from scenarios.stage1_static import Stage1Scenario
-from config import load_config
+from config import load_config, apply_pretrain_obstacle_overrides
 from config.runtime_sync import sync_runtime_config
 
 
@@ -62,6 +62,8 @@ PRETRAIN_OBSTACLE_CHOICES = (
     "gates",
     "slalom",
     "city_blocks",
+    "city_dynamic",
+    "construction_site_dynamic",
     "swinging_sticks",
 )
 
@@ -1393,6 +1395,8 @@ def main():
 
     # Load config for the specified stage
     config = load_config(args.stage)
+    if args.stage == "pretrain":
+        config = apply_pretrain_obstacle_overrides(config, args.obstacle_type)
     algo_params = build_algorithm_params(config.PPO_PARAMS, algo)
     if args.learning_rate is not None:
         algo_params["learning_rate"] = float(args.learning_rate)

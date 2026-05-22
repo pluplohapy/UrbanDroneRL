@@ -33,6 +33,8 @@ DEFAULT_STAGES = (
     "beams",
     "dynamic_mix",
     "city_blocks",
+    "city_dynamic",
+    "construction_site_dynamic",
 )
 
 DEFAULT_TARGETS = {
@@ -47,6 +49,8 @@ DEFAULT_TARGETS = {
     "beams": 0.65,
     "dynamic_mix": 0.65,
     "city_blocks": 0.70,
+    "city_dynamic": 0.65,
+    "construction_site_dynamic": 0.99,
 }
 
 

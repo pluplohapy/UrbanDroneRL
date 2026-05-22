@@ -286,25 +286,27 @@ class BeamObstacle:
 class BoxObstacle:
     """Box/cube obstacle."""
 
-    def __init__(self, position, size, height, physics_client):
+    def __init__(self, position, size, height, physics_client, depth=None, rgba_color=None):
         self.position = position
         self.size = size
+        self.depth = size if depth is None else depth
         self.height = height
         self.client = physics_client
         self.dynamic = False
+        self.rgba_color = rgba_color or [0.3, 0.3, 0.6, 1.0]
 
         # Create collision shape
         collision_shape = p.createCollisionShape(
             p.GEOM_BOX,
-            halfExtents=[size/2, size/2, height/2],
+            halfExtents=[size/2, self.depth/2, height/2],
             physicsClientId=self.client
         )
 
         # Create visual shape
         visual_shape = p.createVisualShape(
             p.GEOM_BOX,
-            halfExtents=[size/2, size/2, height/2],
-            rgbaColor=[0.3, 0.3, 0.6, 1.0],
+            halfExtents=[size/2, self.depth/2, height/2],
+            rgbaColor=self.rgba_color,
             physicsClientId=self.client
         )
 
@@ -318,13 +320,92 @@ class BoxObstacle:
         )
 
         # For collision checking
-        self.radius = size / 2
+        self.radius = max(size, self.depth) / 2
 
     def get_position(self):
         return self.position
 
     def update(self, dt):
         pass  # Static
+
+    def cleanup(self):
+        if self.body_id is not None:
+            p.removeBody(self.body_id, physicsClientId=self.client)
+            self.body_id = None
+
+
+class MovingBoxObstacle:
+    """Rectangular dynamic obstacle with sinusoidal motion, useful for cars."""
+
+    def __init__(
+        self,
+        position,
+        width,
+        depth,
+        height,
+        speed,
+        amplitude,
+        frequency,
+        physics_client,
+        direction=None,
+        phase=0.0,
+        rgba_color=None
+    ):
+        self.initial_position = np.array(position, dtype=float)
+        self.position = np.array(position, dtype=float)
+        self.width = width
+        self.depth = depth
+        self.height = height
+        self.speed = speed
+        self.amplitude = amplitude
+        self.frequency = frequency
+        self.client = physics_client
+        self.dynamic = True
+        self.time = 0.0
+        self.phase = phase
+        self.rgba_color = rgba_color or [0.95, 0.55, 0.12, 1.0]
+        self.angular_frequency = min(2 * np.pi * frequency, speed / max(amplitude, 1e-6))
+        self.radius = max(width, depth) / 2
+
+        if direction is None:
+            direction = np.array([0.0, 1.0, 0.0])
+        else:
+            direction = np.array(direction, dtype=float)
+        norm = np.linalg.norm(direction)
+        self.direction = direction / norm if norm > 1e-6 else np.array([0.0, 1.0, 0.0])
+
+        collision_shape = p.createCollisionShape(
+            p.GEOM_BOX,
+            halfExtents=[width / 2, depth / 2, height / 2],
+            physicsClientId=self.client
+        )
+        visual_shape = p.createVisualShape(
+            p.GEOM_BOX,
+            halfExtents=[width / 2, depth / 2, height / 2],
+            rgbaColor=self.rgba_color,
+            physicsClientId=self.client
+        )
+        self.body_id = p.createMultiBody(
+            baseMass=0,
+            baseCollisionShapeIndex=collision_shape,
+            baseVisualShapeIndex=visual_shape,
+            basePosition=[position[0], position[1], position[2] + height / 2],
+            physicsClientId=self.client
+        )
+
+    def get_position(self):
+        return self.position
+
+    def update(self, dt):
+        self.time += dt
+        offset = self.amplitude * np.sin(self.angular_frequency * self.time + self.phase)
+        self.position = self.initial_position + self.direction * offset
+        p.resetBasePositionAndOrientation(
+            self.body_id,
+            [self.position[0], self.position[1], self.position[2] + self.height / 2],
+            [0, 0, 0, 1],
+            physicsClientId=self.client
+        )
 
     def cleanup(self):
         if self.body_id is not None:

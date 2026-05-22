@@ -23,7 +23,7 @@ import pybullet_data
 from scenarios.stage0_empty import Stage0Scenario
 from scenarios.stage1_static import Stage1Scenario
 from scenarios.stage_pretrain import StagePretrainScenario
-from config import load_config
+from config import load_config, apply_pretrain_obstacle_overrides
 
 PRETRAIN_OBSTACLE_CHOICES = (
     'random',
@@ -37,6 +37,8 @@ PRETRAIN_OBSTACLE_CHOICES = (
     'gates',
     'slalom',
     'city_blocks',
+    'city_dynamic',
+    'construction_site_dynamic',
     'swinging_sticks',
 )
 
@@ -93,6 +95,8 @@ def preview_scenario(stage, obstacle_type, duration, continuous):
 
     # Load config
     config = load_config(stage)
+    if stage == "pretrain":
+        config = apply_pretrain_obstacle_overrides(config, obstacle_type)
 
     # Add ground plane
     p.loadURDF("plane.urdf", physicsClientId=client)

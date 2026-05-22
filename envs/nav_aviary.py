@@ -642,19 +642,38 @@ class NavAviary(BaseRLAviary):
 
     def _generate_obstacles_for_current_map(self):
         """Generate obstacles for the current start/goal pair."""
-        self.scenario.obstacles = []
-
         if hasattr(self.scenario, '_generate_obstacles'):
-            if hasattr(self.scenario, '_resolve_obstacle_type'):
-                chosen_type = self.scenario._resolve_obstacle_type()
-            else:
-                obstacle_type = self.scenario.obstacle_type
-                if obstacle_type == 'random':
-                    chosen_type = self.scenario.rng.choice(list(self.scenario.config.OBSTACLE_TYPES.keys()))
+            params = getattr(self.scenario.config, "OBSTACLE_TYPES", {}).get(
+                getattr(self.scenario, "obstacle_type", ""),
+                {}
+            )
+            max_attempts = int(params.get("spawn_validation_attempts", 1))
+            validate_spawn_points = bool(
+                params.get("validate_spawn_points", False) or
+                "spawn_validation_attempts" in params
+            )
+
+            for attempt in range(max_attempts):
+                self._cleanup_scenario_obstacles()
+                if attempt > 0:
+                    self._resample_start_goal_for_obstacle_retry()
+
+                if hasattr(self.scenario, '_resolve_obstacle_type'):
+                    chosen_type = self.scenario._resolve_obstacle_type()
                 else:
-                    chosen_type = obstacle_type
-            self.scenario._generate_obstacles(chosen_type, self.start_pos, self.goal_pos, self.CLIENT)
-            return
+                    obstacle_type = self.scenario.obstacle_type
+                    if obstacle_type == 'random':
+                        chosen_type = self.scenario.rng.choice(list(self.scenario.config.OBSTACLE_TYPES.keys()))
+                    else:
+                        chosen_type = obstacle_type
+                self.scenario._generate_obstacles(chosen_type, self.start_pos, self.goal_pos, self.CLIENT)
+
+                if not validate_spawn_points or not hasattr(self.scenario, "points_clear_of_obstacles"):
+                    return
+                if self.scenario.points_clear_of_obstacles([self.start_pos, self.goal_pos]):
+                    return
+
+            raise RuntimeError("Could not generate obstacles with clear start/goal points")
 
         if hasattr(self.scenario, 'n_obstacles'):
             from envs.obstacles import StaticObstacle
@@ -694,6 +713,57 @@ class NavAviary(BaseRLAviary):
 
         # Stage 0 has no obstacles
         self.scenario.obstacles = []
+
+    def _cleanup_scenario_obstacles(self):
+        try:
+            valid_body_ids = {
+                p.getBodyUniqueId(i, physicsClientId=self.CLIENT)
+                for i in range(p.getNumBodies(physicsClientId=self.CLIENT))
+            }
+        except Exception:
+            valid_body_ids = None
+
+        for obstacle in getattr(self.scenario, "obstacles", []):
+            try:
+                body_id = getattr(obstacle, "body_id", None)
+                if valid_body_ids is not None and body_id not in valid_body_ids:
+                    obstacle.body_id = None
+                    continue
+                if hasattr(obstacle, "cleanup"):
+                    obstacle.cleanup()
+            except Exception:
+                pass
+        self.scenario.obstacles = []
+
+    def _resample_start_goal_for_obstacle_retry(self):
+        base_start, base_goal = self._sample_start_goal()
+        self.start_pos = base_start.copy()
+        self.goal_pos = base_goal.copy()
+
+        if self.swarm_mode:
+            self.start_pos_all, self.goal_pos_all = self._build_swarm_positions(base_start, base_goal)
+            self.INIT_XYZS = self.start_pos_all.copy()
+            self.INIT_RPYS = np.zeros((self.num_drones, 3))
+        else:
+            self.start_pos_all = np.array([self.start_pos.copy()])
+            self.goal_pos_all = np.array([self.goal_pos.copy()])
+            self.INIT_XYZS = np.array([self.start_pos])
+            self.INIT_RPYS = np.array([[0, 0, 0]])
+
+        if getattr(self, "DRONE_IDS", None) is not None:
+            for i, drone_id in enumerate(self.DRONE_IDS):
+                p.resetBasePositionAndOrientation(
+                    drone_id,
+                    self.INIT_XYZS[i],
+                    [0, 0, 0, 1],
+                    physicsClientId=self.CLIENT
+                )
+                p.resetBaseVelocity(
+                    drone_id,
+                    linearVelocity=[0, 0, 0],
+                    angularVelocity=[0, 0, 0],
+                    physicsClientId=self.CLIENT
+                )
 
     def _serialize_obstacles(self):
         """Serialize generated obstacles so fixed-map mode can recreate them."""
@@ -750,7 +820,23 @@ class NavAviary(BaseRLAviary):
                     'type': obstacle_type,
                     'position': np.array(obstacle.position, dtype=float).tolist(),
                     'size': float(obstacle.size),
-                    'height': float(obstacle.height)
+                    'depth': float(getattr(obstacle, 'depth', obstacle.size)),
+                    'height': float(obstacle.height),
+                    'rgba_color': list(getattr(obstacle, 'rgba_color', [0.3, 0.3, 0.6, 1.0]))
+                })
+            elif obstacle_type == 'MovingBoxObstacle':
+                specs.append({
+                    'type': obstacle_type,
+                    'position': np.array(obstacle.initial_position, dtype=float).tolist(),
+                    'width': float(obstacle.width),
+                    'depth': float(obstacle.depth),
+                    'height': float(obstacle.height),
+                    'speed': float(obstacle.speed),
+                    'amplitude': float(obstacle.amplitude),
+                    'frequency': float(obstacle.frequency),
+                    'direction': np.array(obstacle.direction, dtype=float).tolist(),
+                    'phase': float(getattr(obstacle, 'phase', 0.0)),
+                    'rgba_color': list(getattr(obstacle, 'rgba_color', [0.95, 0.55, 0.12, 1.0]))
                 })
             elif obstacle_type == 'SwingingStickObstacle':
                 specs.append({
@@ -781,6 +867,7 @@ class NavAviary(BaseRLAviary):
             WallObstacle,
             BeamObstacle,
             BoxObstacle,
+            MovingBoxObstacle,
             SwingingStickObstacle
         )
 
@@ -838,7 +925,23 @@ class NavAviary(BaseRLAviary):
                     position=np.array(spec['position'], dtype=float),
                     size=spec['size'],
                     height=spec['height'],
-                    physics_client=self.CLIENT
+                    physics_client=self.CLIENT,
+                    depth=spec.get('depth'),
+                    rgba_color=spec.get('rgba_color')
+                )
+            elif obstacle_type == 'MovingBoxObstacle':
+                obstacle = MovingBoxObstacle(
+                    position=np.array(spec['position'], dtype=float),
+                    width=spec['width'],
+                    depth=spec['depth'],
+                    height=spec['height'],
+                    speed=spec['speed'],
+                    amplitude=spec['amplitude'],
+                    frequency=spec['frequency'],
+                    physics_client=self.CLIENT,
+                    direction=spec.get('direction'),
+                    phase=spec.get('phase', 0.0),
+                    rgba_color=spec.get('rgba_color')
                 )
             elif obstacle_type == 'SwingingStickObstacle':
                 obstacle = SwingingStickObstacle(
