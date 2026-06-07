@@ -1,7 +1,3 @@
-"""
-Stage Pretrain: Diverse obstacles for curriculum learning.
-No RRT* planner - pure RL training.
-"""
 
 from collections import deque
 from types import SimpleNamespace
@@ -16,22 +12,8 @@ from config import load_config
 
 
 class StagePretrainScenario(BaseScenario):
-    """Pretrain scenario with diverse obstacle types."""
 
     def __init__(self, obstacle_type='random', seed=None):
-        """
-        Initialize pretrain scenario.
-
-        Args:
-            obstacle_type: Type of obstacles to generate
-                          'random' - random type each reset (includes empty)
-                          'dynamic_mix' - random dynamic type each reset
-                          'empty', 'cylinders', 'spheres', 'crossing_spheres',
-                          'walls', 'beams', 'boxes', 'gates', 'slalom',
-                          'city_blocks', 'city_dynamic',
-                          'construction_site_dynamic', 'swinging_sticks' - specific type
-            seed: Random seed for reproducibility
-        """
         super().__init__(seed)
         self.obstacle_type = obstacle_type
         self.current_obstacle_type = None
@@ -40,7 +22,6 @@ class StagePretrainScenario(BaseScenario):
 
     @staticmethod
     def _config_for_obstacle_type(base_config, obstacle_type: str):
-        """Return a shallow config copy with per-map arena overrides when needed."""
         params = getattr(base_config, "OBSTACLE_TYPES", {}).get(obstacle_type, {})
         overrides = dict(params.get("config_overrides", {}))
         if not overrides:
@@ -55,7 +36,6 @@ class StagePretrainScenario(BaseScenario):
         return SimpleNamespace(**values)
 
     def _resolve_obstacle_type(self) -> str:
-        """Resolve obstacle mode into a concrete obstacle type."""
         if self.obstacle_type == 'random':
             choices = [
                 name for name, params in self.config.OBSTACLE_TYPES.items()
@@ -84,28 +64,9 @@ class StagePretrainScenario(BaseScenario):
         return self.obstacle_type
 
     def generate(self, client_id):
-        """
-        Generate scenario: create obstacles and return start/goal.
-        Same as reset() for pretrain.
-
-        Args:
-            client_id: PyBullet client ID
-
-        Returns:
-            start_pos, goal_pos: Starting and goal positions
-        """
         return self.reset(client_id)
 
     def reset(self, client_id):
-        """
-        Reset scenario: generate start/goal and create obstacles.
-
-        Args:
-            client_id: PyBullet client ID
-
-        Returns:
-            start_pos, goal_pos: Starting and goal positions
-        """
         self.client_id = client_id
 
         max_attempts = int(getattr(self.config, "SPAWN_VALIDATION_ATTEMPTS", 1))
@@ -115,14 +76,14 @@ class StagePretrainScenario(BaseScenario):
         for attempt in range(max_attempts):
             self._cleanup_generated_obstacles()
 
-            # Generate start and goal in opposite zones
+
             start_pos, goal_pos = self._generate_start_goal_zones()
 
-            # Choose obstacle type
+
             chosen_type = self._resolve_obstacle_type()
             self.current_obstacle_type = chosen_type
 
-            # Generate obstacles of chosen type
+
             self._generate_obstacles(chosen_type, start_pos, goal_pos, client_id)
 
             chosen_params = self.config.OBSTACLE_TYPES.get(chosen_type, {})
@@ -136,7 +97,6 @@ class StagePretrainScenario(BaseScenario):
         raise RuntimeError(f"Could not generate {self.obstacle_type} with clear start/goal points")
 
     def _cleanup_generated_obstacles(self):
-        """Remove generated obstacle bodies from PyBullet when retrying a map."""
         try:
             import pybullet as p
             valid_body_ids = {
@@ -159,12 +119,6 @@ class StagePretrainScenario(BaseScenario):
         self.obstacles = []
 
     def _generate_start_goal_zones(self) -> Tuple[np.ndarray, np.ndarray]:
-        """
-        Generate start and goal in opposite zones to ensure long paths.
-
-        Returns:
-            start_pos, goal_pos: Starting and goal positions
-        """
         bidirectional = bool(getattr(self.config, "PRETRAIN_BIDIRECTIONAL_GOALS", True))
         if not bidirectional:
             start_y_range = self.config.START_ZONE_Y
@@ -189,7 +143,6 @@ class StagePretrainScenario(BaseScenario):
         return start_pos, goal_pos
 
     def _sample_goal_x(self) -> float:
-        """Sample goal X, optionally biased toward corridor side/corner bands."""
         bias = float(getattr(self.config, "GOAL_CORNER_BIAS", 0.0))
         bands = getattr(self.config, "GOAL_CORNER_X_BANDS", None)
         if bands and self.rng.random() < bias:
@@ -204,11 +157,9 @@ class StagePretrainScenario(BaseScenario):
         return float(self.rng.uniform(*self._clip_goal_range_to_arena(self.config.GOAL_ZONE_X, axis="x")))
 
     def _goal_wall_clearance(self) -> float:
-        """Configured terminal clearance from physical arena walls."""
         return max(0.0, float(getattr(self.config, "GOAL_WALL_CLEARANCE", 0.0)))
 
     def _clip_goal_range_to_arena(self, value_range, axis: str) -> Tuple[float, float]:
-        """Clip a terminal sampling range so goals are not placed in wall-danger zones."""
         low, high = float(value_range[0]), float(value_range[1])
         if low > high:
             low, high = high, low
@@ -233,7 +184,6 @@ class StagePretrainScenario(BaseScenario):
         return center, center
 
     def _sample_goal_y(self, goal_y_range) -> float:
-        """Sample goal Y, optionally biased toward the end wall side of its zone."""
         bias = float(getattr(self.config, "GOAL_END_Y_BIAS", 0.0))
         goal_y_range = self._clip_goal_range_to_arena(goal_y_range, axis="y")
         if self.rng.random() >= bias:
@@ -252,15 +202,6 @@ class StagePretrainScenario(BaseScenario):
 
     def _generate_obstacles(self, obstacle_type: str, start_pos: np.ndarray,
                            goal_pos: np.ndarray, client_id: int):
-        """
-        Generate obstacles of specified type.
-
-        Args:
-            obstacle_type: Type of obstacles to generate
-            start_pos: Start position
-            goal_pos: Goal position
-            client_id: PyBullet client ID
-        """
         if obstacle_type not in self.config.OBSTACLE_TYPES:
             raise ValueError(f"Unknown obstacle type for pretrain scenario: {obstacle_type}")
 
@@ -269,7 +210,7 @@ class StagePretrainScenario(BaseScenario):
         n_obstacles = self.rng.randint(params['count'][0], params['count'][1] + 1)
 
         if obstacle_type == 'empty':
-            # No obstacles for empty map
+
             return
         elif obstacle_type == 'cylinders':
             self._generate_cylinders(n_obstacles, params, start_pos, goal_pos, client_id)
@@ -298,20 +239,12 @@ class StagePretrainScenario(BaseScenario):
 
     def _generate_cylinders(self, n_obstacles: int, params: dict,
                            start_pos: np.ndarray, goal_pos: np.ndarray, client_id: int):
-        """
-        Generate cylindrical obstacles with map-quality constraints.
-
-        We reject layouts that create dead-ends/blocked passages by requiring:
-        1) minimum offset from arena walls,
-        2) minimum spacing between cylinders,
-        3) a traversable 2D path from start to goal on an inflated occupancy grid.
-        """
         wall_margin = float(getattr(self.config, "CYLINDER_WALL_MARGIN", 0.35))
         pair_clearance = float(getattr(self.config, "CYLINDER_PAIR_CLEARANCE", 0.45))
         path_clearance = float(getattr(self.config, "CYLINDER_PATH_CLEARANCE", 0.45))
         grid_resolution = float(getattr(self.config, "CYLINDER_PATH_GRID_RESOLUTION", 0.20))
 
-        # If strict constraints are hard to satisfy, gradually reduce obstacle count.
+
         for target_count in range(n_obstacles, 0, -1):
             for _ in range(40):
                 layout = self._sample_cylinder_layout(
@@ -357,7 +290,6 @@ class StagePretrainScenario(BaseScenario):
         pair_clearance: float,
         attempts_per_obstacle: int = 120,
     ) -> List[Tuple[np.ndarray, float, float]]:
-        """Sample non-overlapping cylinders with wall/start/goal clearance."""
         half_x = self.config.ARENA_SIZE_X / 2.0
         half_y = self.config.ARENA_SIZE_Y / 2.0
         layout: List[Tuple[np.ndarray, float, float]] = []
@@ -406,12 +338,6 @@ class StagePretrainScenario(BaseScenario):
         clearance: float,
         grid_resolution: float,
     ) -> bool:
-        """
-        Fast XY reachability check on an inflated occupancy grid.
-
-        Cylinders and arena borders are expanded by `clearance` to ensure that
-        accepted maps still contain a practical corridor for the drone body.
-        """
         half_x = self.config.ARENA_SIZE_X / 2.0
         half_y = self.config.ARENA_SIZE_Y / 2.0
         x_min, x_max = -half_x, half_x
@@ -421,7 +347,7 @@ class StagePretrainScenario(BaseScenario):
         y_vals = np.arange(y_min, y_max + grid_resolution * 0.5, grid_resolution)
         xx, yy = np.meshgrid(x_vals, y_vals)
 
-        # Block near walls to avoid "wall-hugging" passages that immediately OOB.
+
         blocked = (np.abs(xx) >= (half_x - clearance)) | (np.abs(yy) >= (half_y - clearance))
 
         for pos, radius, _ in cylinders:
@@ -467,7 +393,6 @@ class StagePretrainScenario(BaseScenario):
 
     def _generate_spheres(self, n_obstacles: int, params: dict,
                          start_pos: np.ndarray, goal_pos: np.ndarray, client_id: int):
-        """Generate spherical obstacles (birds)."""
         half_x = self.config.ARENA_SIZE_X / 2.0
         half_y = self.config.ARENA_SIZE_Y / 2.0
         start_goal_clearance = float(getattr(self.config, "DYNAMIC_START_GOAL_CLEARANCE", 1.1))
@@ -482,7 +407,7 @@ class StagePretrainScenario(BaseScenario):
             direction = np.array([np.cos(angle), np.sin(angle), 0.0])
             sweep_radius = radius + amplitude
 
-            # Find valid position
+
             for _ in range(80):
                 x_min = -half_x + sweep_radius + 0.15
                 x_max = half_x - sweep_radius - 0.15
@@ -514,7 +439,6 @@ class StagePretrainScenario(BaseScenario):
 
     def _generate_crossing_spheres(self, n_obstacles: int, params: dict,
                                    start_pos: np.ndarray, goal_pos: np.ndarray, client_id: int):
-        """Generate dynamic spheres crossing the main corridor at separated Y bands."""
         half_y = self.config.ARENA_SIZE_Y / 2.0
         start_goal_clearance = float(getattr(self.config, "DYNAMIC_START_GOAL_CLEARANCE", 1.1))
         y_min = -half_y + start_goal_clearance + 0.6
@@ -567,13 +491,12 @@ class StagePretrainScenario(BaseScenario):
 
     def _generate_walls(self, n_obstacles: int, params: dict,
                        start_pos: np.ndarray, goal_pos: np.ndarray, client_id: int):
-        """Generate vertical wall obstacles."""
         for _ in range(n_obstacles):
             width = self.rng.uniform(*params['width'])
             height = self.rng.uniform(*params['height'])
             thickness = params['thickness']
 
-            # Find valid position
+
             for _ in range(50):
                 x = self.rng.uniform(-self.config.ARENA_SIZE_X/2 + width/2,
                                     self.config.ARENA_SIZE_X/2 - width/2)
@@ -581,7 +504,7 @@ class StagePretrainScenario(BaseScenario):
                                     self.config.ARENA_SIZE_Y/2 - thickness/2)
                 pos = np.array([x, y, 0.0])
 
-                # Check clearance (use width as effective radius)
+
                 if self._is_valid_position(pos, width/2, start_pos, goal_pos):
                     obstacle = WallObstacle(pos, width, height, thickness, client_id)
                     self.obstacles.append(obstacle)
@@ -589,7 +512,6 @@ class StagePretrainScenario(BaseScenario):
 
     def _generate_beams(self, n_obstacles: int, params: dict,
                        start_pos: np.ndarray, goal_pos: np.ndarray, client_id: int):
-        """Generate swinging beams with feasible spacing and vertical clearance."""
         placed = []
         half_x = self.config.ARENA_SIZE_X / 2.0
         half_y = self.config.ARENA_SIZE_Y / 2.0
@@ -648,12 +570,11 @@ class StagePretrainScenario(BaseScenario):
 
     def _generate_boxes(self, n_obstacles: int, params: dict,
                        start_pos: np.ndarray, goal_pos: np.ndarray, client_id: int):
-        """Generate box/cube obstacles."""
         for _ in range(n_obstacles):
             size = self.rng.uniform(*params['size'])
             height = self.rng.uniform(*params['height'])
 
-            # Find valid position
+
             for _ in range(50):
                 x = self.rng.uniform(-self.config.ARENA_SIZE_X/2 + 1, self.config.ARENA_SIZE_X/2 - 1)
                 y = self.rng.uniform(-self.config.ARENA_SIZE_Y/2 + 1, self.config.ARENA_SIZE_Y/2 - 1)
@@ -666,7 +587,6 @@ class StagePretrainScenario(BaseScenario):
 
     def _generate_gates(self, n_obstacles: int, params: dict,
                         start_pos: np.ndarray, goal_pos: np.ndarray, client_id: int):
-        """Generate wall gates with offset openings along the corridor."""
         half_x = self.config.ARENA_SIZE_X / 2.0
         half_y = self.config.ARENA_SIZE_Y / 2.0
         start_goal_clearance = float(getattr(self.config, "DYNAMIC_START_GOAL_CLEARANCE", 1.1))
@@ -688,7 +608,6 @@ class StagePretrainScenario(BaseScenario):
             self._add_gate_at_y(float(y), params, gap_center, client_id)
 
     def _add_gate_at_y(self, y: float, params: dict, gap_center: float, client_id: int):
-        """Add two wall segments at one Y position, leaving a flyable gap."""
         half_x = self.config.ARENA_SIZE_X / 2.0
         gap_width = self.rng.uniform(*params['gap_width'])
         height = self.rng.uniform(*params['height'])
@@ -720,7 +639,6 @@ class StagePretrainScenario(BaseScenario):
 
     def _generate_slalom(self, n_obstacles: int, params: dict,
                          start_pos: np.ndarray, goal_pos: np.ndarray, client_id: int):
-        """Generate alternating side blocks that force smooth lateral corrections."""
         half_y = self.config.ARENA_SIZE_Y / 2.0
         start_goal_clearance = float(getattr(self.config, "DYNAMIC_START_GOAL_CLEARANCE", 1.1))
         y_min = -half_y + start_goal_clearance + 0.5
@@ -744,13 +662,6 @@ class StagePretrainScenario(BaseScenario):
 
     def _generate_city_blocks(self, n_obstacles: int, params: dict,
                               start_pos: np.ndarray, goal_pos: np.ndarray, client_id: int):
-        """
-        Generate a small city-like avenue.
-
-        The map keeps a continuous drivable/flyable street by construction: each
-        row has two side blocks and, on alternating rows, short gate walls with a
-        visible opening. This is harder than cylinders but still PPO-friendly.
-        """
         half_x = self.config.ARENA_SIZE_X / 2.0
         half_y = self.config.ARENA_SIZE_Y / 2.0
         y_min = -half_y + 1.55
@@ -799,12 +710,6 @@ class StagePretrainScenario(BaseScenario):
 
     def _generate_city_dynamic(self, n_obstacles: int, params: dict,
                                start_pos: np.ndarray, goal_pos: np.ndarray, client_id: int):
-        """
-        Generate a compact dynamic city block.
-
-        This is still a planner-free RL map: it keeps a flyable main avenue by
-        construction, then adds city details and dynamic traffic around it.
-        """
         half_x = self.config.ARENA_SIZE_X / 2.0
         half_y = self.config.ARENA_SIZE_Y / 2.0
         y_min = -half_y + 2.35
@@ -876,7 +781,7 @@ class StagePretrainScenario(BaseScenario):
                     ))
             if not near_cross:
                 bird_lanes.append((center_x, y + y_jitter, avenue_width, height))
-            # Street furniture near curbs: lamp posts and signs.
+
             if row_idx % 2 == 0:
                 for side in (-1.0, 1.0):
                     curb_x = center_x + side * (avenue_width / 2.0 + 0.20)
@@ -897,8 +802,8 @@ class StagePretrainScenario(BaseScenario):
                                 rgba_color=sign_color,
                             ))
 
-        # Overhead wires/skybridges. They make the city feel urban while
-        # preserving a lower flyable passage.
+
+
         wire_count = int(self.rng.randint(params['wire_count'][0], params['wire_count'][1] + 1))
         for y in np.linspace(y_min + 1.0, y_max - 1.0, wire_count):
             length = self.rng.uniform(*params['wire_length'])
@@ -913,7 +818,7 @@ class StagePretrainScenario(BaseScenario):
                 physics_client=client_id,
             ))
 
-        # Moving cars along the main avenue and at cross streets.
+
         for idx in range(int(self.rng.randint(params['vehicle_count'][0], params['vehicle_count'][1] + 1))):
             lane_x = self.rng.uniform(-0.55, 0.55)
             y = self.rng.uniform(y_min + 0.8, y_max - 0.8)
@@ -940,7 +845,7 @@ class StagePretrainScenario(BaseScenario):
                 phase=self.rng.uniform(0.0, 2.0 * np.pi),
             ))
 
-        # Birds crossing high between building facades, below the ceiling.
+
         bird_count = int(self.rng.randint(params['bird_count'][0], params['bird_count'][1] + 1))
         bird_z_low = float(params['bird_height'][0])
         bird_z_high = min(float(params['bird_height'][1]), self.config.ARENA_HEIGHT - 0.65)
@@ -974,13 +879,6 @@ class StagePretrainScenario(BaseScenario):
 
     def _generate_construction_site_dynamic(self, n_obstacles: int, params: dict,
                                             start_pos: np.ndarray, goal_pos: np.ndarray, client_id: int):
-        """
-        Generate a dynamic construction site with an always-open central flyway.
-
-        Static structures stay mostly on both sides of the avenue. Dynamic
-        objects then cross, swing, or move vertically through parts of the
-        corridor, so the task tests local avoidance without requiring RRT.
-        """
         half_x = self.config.ARENA_SIZE_X / 2.0
         half_y = self.config.ARENA_SIZE_Y / 2.0
         y_min = -half_y + 2.8
@@ -1021,7 +919,7 @@ class StagePretrainScenario(BaseScenario):
                 x_center = float(np.clip(x_center, -half_x + width_x / 2.0, half_x - width_x / 2.0))
                 frame_sites.append((x_center, y_center, width_x, depth_y, height, side))
 
-                # Unfinished concrete floors.
+
                 slab_count = max(1, levels)
                 level_values = np.linspace(0.85, max(1.1, height - 0.35), slab_count)
                 for level in level_values:
@@ -1035,7 +933,7 @@ class StagePretrainScenario(BaseScenario):
                         rgba_color=slab_color,
                     ))
 
-                # Exposed columns at the corners of the frame.
+
                 column_radius = self.rng.uniform(*params['column_radius'])
                 for x_offset, y_offset in (
                     (-width_x / 2.0 + 0.18, -depth_y / 2.0 + 0.18),
@@ -1048,7 +946,7 @@ class StagePretrainScenario(BaseScenario):
                         physics_client=client_id,
                     ))
 
-                # Scaffolding facing the central lane.
+
                 facade_x = lane_left - 0.18 if side < 0 else lane_right + 0.18
                 facade_x = float(np.clip(facade_x, -half_x + 0.12, half_x - 0.12))
                 scaffold_height = min(height, self.rng.uniform(*params['scaffold_height']))
@@ -1071,7 +969,7 @@ class StagePretrainScenario(BaseScenario):
                     physics_client=client_id,
                 ))
 
-                # Low temporary barriers and material piles near the lane edge.
+
                 if row_idx % 2 == 0:
                     self.obstacles.append(BoxObstacle(
                         np.array([facade_x - side * 0.10, y_center + self.rng.uniform(-0.25, 0.25), 0.0]),
@@ -1091,7 +989,7 @@ class StagePretrainScenario(BaseScenario):
                         rgba_color=frame_color,
                     ))
 
-        # Tower cranes: mast on the side, rotating arm above the flyway.
+
         crane_count = int(self.rng.randint(params['crane_count'][0], params['crane_count'][1] + 1))
         crane_y_values = np.linspace(y_min + 2.0, y_max - 2.0, max(crane_count, 1))
         for idx in range(crane_count):
@@ -1118,7 +1016,7 @@ class StagePretrainScenario(BaseScenario):
                 phase=self.rng.uniform(0.0, 2.0 * np.pi),
             ))
 
-        # Suspended loads moving below crane height but above the low vehicle layer.
+
         for _ in range(int(self.rng.randint(params['load_count'][0], params['load_count'][1] + 1))):
             size = self.rng.uniform(*params['load_size'])
             y = self.rng.uniform(y_min + 1.2, y_max - 1.2)
@@ -1140,7 +1038,7 @@ class StagePretrainScenario(BaseScenario):
                 rgba_color=cargo_color,
             ))
 
-        # Construction vehicles moving along the central work lane.
+
         for idx in range(int(self.rng.randint(params['vehicle_count'][0], params['vehicle_count'][1] + 1))):
             x = self.rng.uniform(-lane_width * 0.25, lane_width * 0.25)
             y = self.rng.uniform(y_min + 1.0, y_max - 1.0)
@@ -1159,7 +1057,7 @@ class StagePretrainScenario(BaseScenario):
                 rgba_color=[0.95, 0.72, 0.10, 1.0] if idx % 2 == 0 else [0.18, 0.42, 0.82, 1.0],
             ))
 
-        # Vertical lifts/platforms on building facades.
+
         for _ in range(int(self.rng.randint(params['lift_count'][0], params['lift_count'][1] + 1))):
             if frame_sites:
                 x_center, y_center, width_x, depth_y, height, side = frame_sites[int(self.rng.randint(0, len(frame_sites)))]
@@ -1185,7 +1083,7 @@ class StagePretrainScenario(BaseScenario):
                 rgba_color=[0.30, 0.62, 0.86, 1.0],
             ))
 
-        # Hanging pipes/girders that swing near the flyway.
+
         pipe_count = int(self.rng.randint(params['swinging_pipe_count'][0], params['swinging_pipe_count'][1] + 1))
         for y in np.linspace(y_min + 1.5, y_max - 1.5, max(pipe_count, 1))[:pipe_count]:
             length = self.rng.uniform(*params['swinging_pipe_length'])
@@ -1202,7 +1100,7 @@ class StagePretrainScenario(BaseScenario):
                 phase=self.rng.uniform(0.0, 2.0 * np.pi),
             ))
 
-        # High moving debris / inspection drones between unfinished floors.
+
         debris_count = int(self.rng.randint(params['debris_count'][0], params['debris_count'][1] + 1))
         z_low, z_high = params['debris_height']
         z_high = min(float(z_high), self.config.ARENA_HEIGHT - 0.65)
@@ -1226,7 +1124,6 @@ class StagePretrainScenario(BaseScenario):
 
     def _generate_swinging_sticks(self, n_obstacles: int, params: dict,
                                   start_pos: np.ndarray, goal_pos: np.ndarray, client_id: int):
-        """Generate swinging sticks with varied height and guaranteed low gap."""
         placed = []
         half_x = self.config.ARENA_SIZE_X / 2.0
         half_y = self.config.ARENA_SIZE_Y / 2.0
@@ -1288,14 +1185,12 @@ class StagePretrainScenario(BaseScenario):
                     break
 
     def _sample_scalar(self, value):
-        """Sample scalar config values that may be fixed or expressed as a range."""
         if isinstance(value, (tuple, list)):
             return self.rng.uniform(*value)
         return value
 
     @staticmethod
     def _distance_point_to_x_bar(point: np.ndarray, bar_pos: np.ndarray, length: float) -> float:
-        """Distance in XY from a point to a bar segment aligned with the X axis."""
         dx = max(abs(point[0] - bar_pos[0]) - length / 2.0, 0.0)
         dy = abs(point[1] - bar_pos[1])
         return float(np.hypot(dx, dy))
@@ -1311,7 +1206,6 @@ class StagePretrainScenario(BaseScenario):
         min_start_goal_clearance: float,
         min_pair_y_clearance: float,
     ) -> bool:
-        """Validate an X-aligned bar without overestimating it as a large circle."""
         half_x = self.config.ARENA_SIZE_X / 2.0
         half_y = self.config.ARENA_SIZE_Y / 2.0
         if pos[0] - length / 2.0 < -half_x or pos[0] + length / 2.0 > half_x:
@@ -1347,22 +1241,7 @@ class StagePretrainScenario(BaseScenario):
         min_pair_clearance: float = 0.0,
         wall_margin: float = 0.0,
     ) -> bool:
-        """
-        Check if position is valid (not too close to start/goal).
 
-        Args:
-            pos: Position to check
-            radius: Effective radius of obstacle
-            start_pos: Start position
-            goal_pos: Goal position
-            placed: Already placed obstacle centers/radii in XY
-            min_pair_clearance: Extra XY spacing between obstacles
-            wall_margin: Extra spacing from arena walls
-
-        Returns:
-            True if valid position
-        """
-        # Keep obstacle away from arena borders.
         half_x = self.config.ARENA_SIZE_X / 2.0
         half_y = self.config.ARENA_SIZE_Y / 2.0
         if abs(pos[0]) + radius + wall_margin > half_x:
@@ -1370,15 +1249,15 @@ class StagePretrainScenario(BaseScenario):
         if abs(pos[1]) + radius + wall_margin > half_y:
             return False
 
-        # Check clearance from start and goal
+
         dist_to_start = np.linalg.norm(pos[:2] - start_pos[:2])
         dist_to_goal = np.linalg.norm(pos[:2] - goal_pos[:2])
 
-        min_clearance = 1.0  # From base config
+        min_clearance = 1.0
         if dist_to_start < min_clearance + radius or dist_to_goal < min_clearance + radius:
             return False
 
-        # Check clearance from already placed obstacles in XY.
+
         if placed:
             for other_pos, other_radius in placed:
                 dist_to_other = np.linalg.norm(pos[:2] - other_pos[:2])
@@ -1388,7 +1267,6 @@ class StagePretrainScenario(BaseScenario):
         return True
 
     def points_clear_of_obstacles(self, points, clearance: float = None) -> bool:
-        """Check that start/goal points are not inside or too close to obstacles."""
         if clearance is None:
             params = getattr(self.config, "OBSTACLE_TYPES", {}).get(self.current_obstacle_type, {})
             clearance = float(params.get("spawn_clearance", getattr(self.config, "MIN_CLEARANCE", 0.35) * 0.5))
@@ -1466,27 +1344,14 @@ class StagePretrainScenario(BaseScenario):
         return float(np.linalg.norm(point - closest))
 
     def update_dynamic_obstacles(self, dt):
-        """
-        Update dynamic obstacles (spheres, beams, sticks).
-
-        Args:
-            dt: Time step
-        """
         for obstacle in self.obstacles:
             if hasattr(obstacle, 'dynamic') and obstacle.dynamic:
                 obstacle.update(dt)
 
     def get_obstacles(self):
-        """
-        Get list of obstacles.
-
-        Returns:
-            List of obstacle objects
-        """
         return self.obstacles
 
     def cleanup(self):
-        """Remove all obstacles from simulation."""
         for obstacle in self.obstacles:
             obstacle.cleanup()
         self.obstacles = []

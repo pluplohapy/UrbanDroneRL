@@ -1,7 +1,3 @@
-"""
-Visualize multiple flights on a fixed map to show trajectory distribution.
-Shows heatmap and 3D overlay of many episodes.
-"""
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -16,39 +12,23 @@ import config
 
 
 def collect_trajectories(model_path, vec_normalize_path, n_episodes=100, seed=42):
-    """
-    Collect multiple trajectories on the same fixed map.
-
-    Args:
-        model_path: Path to trained model
-        vec_normalize_path: Path to VecNormalize stats
-        n_episodes: Number of episodes to run
-        seed: Fixed seed for map generation
-
-    Returns:
-        all_trajectories: List of trajectory arrays
-        all_infos: List of episode info dicts
-        start_pos: Start position
-        goal_pos: Goal position
-        obstacles: List of (position, radius) tuples
-    """
     import pybullet as p
 
     print(f"Loading model from {model_path}...")
     model = PPO.load(model_path)
 
-    # Create environment WITHOUT vectorization to avoid auto-reset
+
     scenario = Stage1Scenario(seed=seed)
     env = NavAviary(scenario=scenario, gui=False)
 
-    # Load normalization stats manually
+
     vec_normalize = VecNormalize.load(vec_normalize_path, DummyVecEnv([lambda: env]))
     vec_normalize.training = False
     vec_normalize.norm_reward = False
 
     print(f"Collecting {n_episodes} episodes on fixed map (seed={seed})...")
 
-    # First reset to create the map
+
     obs, _ = env.reset()
     start_pos = env.start_pos.copy()
     goal_pos = env.goal_pos.copy()
@@ -64,13 +44,13 @@ def collect_trajectories(model_path, vec_normalize_path, n_episodes=100, seed=42
     all_infos = []
 
     for episode in range(n_episodes):
-        # Manual reset: only reset drone position, keep obstacles
+
         env.start_pos = start_pos.copy()
         env.goal_pos = goal_pos.copy()
         env.INIT_XYZS = np.array([start_pos])
         env.INIT_RPYS = np.array([[0, 0, 0]])
 
-        # Reset PyBullet drone state
+
         p.resetBasePositionAndOrientation(
             env.DRONE_IDS[0],
             start_pos,
@@ -84,27 +64,27 @@ def collect_trajectories(model_path, vec_normalize_path, n_episodes=100, seed=42
             physicsClientId=env.CLIENT
         )
 
-        # Reset internal state
+
         env.control_step_counter = 0
         env.prev_dist_to_goal = np.linalg.norm(goal_pos - start_pos)
         env.prev_action = np.zeros(4)
         env.visited_cells = set()
 
-        # Get normalized observation
+
         obs = env._computeObs()
         obs_normalized = vec_normalize.normalize_obs(obs.reshape(1, -1))[0]
 
-        # Collect trajectory - use start_pos directly since we just reset to it
+
         trajectory = [start_pos.copy()]
         step = 0
         terminated = False
         truncated = False
 
         while not (terminated or truncated) and step < config.MAX_STEPS:
-            # Use deterministic policy for best performance
+
             action, _ = model.predict(obs_normalized, deterministic=True)
 
-            # Step environment directly (no vectorization)
+
             obs, reward, terminated, truncated, info = env.step(action)
             obs_normalized = vec_normalize.normalize_obs(obs.reshape(1, -1))[0]
 
@@ -119,10 +99,10 @@ def collect_trajectories(model_path, vec_normalize_path, n_episodes=100, seed=42
             success_rate = sum(i['is_success'] for i in all_infos) / len(all_infos)
             print(f"  Episode {episode + 1}/{n_episodes} | Success rate: {success_rate:.1%}")
 
-    # Close environment
+
     env.close()
 
-    # Final statistics
+
     n_success = sum(i['is_success'] for i in all_infos)
     n_crash = sum(i['is_crash'] for i in all_infos)
     n_timeout = n_episodes - n_success - n_crash
@@ -136,9 +116,6 @@ def collect_trajectories(model_path, vec_normalize_path, n_episodes=100, seed=42
 
 
 def plot_heatmap(all_trajectories, start_pos, goal_pos, obstacles, output_path):
-    """
-    Plot 2D heatmap of trajectory density (top view).
-    """
     print(f"\nGenerating heatmap...")
 
     grid_size = 100
@@ -153,19 +130,19 @@ def plot_heatmap(all_trajectories, start_pos, goal_pos, obstacles, output_path):
 
     plt.figure(figsize=(12, 10))
 
-    # Plot heatmap
+
     extent = [-config.ARENA_SIZE_X/2, config.ARENA_SIZE_X/2,
               -config.ARENA_SIZE_Y/2, config.ARENA_SIZE_Y/2]
     plt.imshow(heatmap, cmap='YlOrRd', extent=extent, origin='lower', aspect='auto')
     plt.colorbar(label='Trajectory Density')
 
-    # Plot obstacles
+
     for obs_pos, obs_radius in obstacles:
         circle = plt.Circle((obs_pos[0], obs_pos[1]), obs_radius,
                            color='blue', alpha=0.3, linewidth=2, fill=True)
         plt.gca().add_patch(circle)
 
-    # Plot start/goal
+
     plt.scatter(start_pos[0], start_pos[1], c='green', s=200,
                marker='o', edgecolors='black', linewidths=2, label='Start', zorder=5)
     plt.scatter(goal_pos[0], goal_pos[1], c='red', s=200,
@@ -183,15 +160,11 @@ def plot_heatmap(all_trajectories, start_pos, goal_pos, obstacles, output_path):
 
 
 def plot_2d_trajectories(all_trajectories, all_infos, start_pos, goal_pos, obstacles, output_path):
-    """
-    Plot 2D overlay of all trajectories (top view) colored by outcome.
-    Green = success, Red = crash, Gray = timeout.
-    """
     print(f"\nGenerating 2D trajectory overlay...")
 
     plt.figure(figsize=(14, 12))
 
-    # Plot trajectories by outcome
+
     for traj, info in zip(all_trajectories, all_infos):
         if info['is_success']:
             color = 'green'
@@ -203,7 +176,7 @@ def plot_2d_trajectories(all_trajectories, all_infos, start_pos, goal_pos, obsta
             alpha = 0.5
             linewidth = 1.5
             zorder = 2
-        else:  # timeout
+        else:
             color = 'gray'
             alpha = 0.3
             linewidth = 1.0
@@ -212,19 +185,19 @@ def plot_2d_trajectories(all_trajectories, all_infos, start_pos, goal_pos, obsta
         plt.plot(traj[:, 0], traj[:, 1], color=color, alpha=alpha,
                 linewidth=linewidth, zorder=zorder)
 
-    # Plot obstacles
+
     for obs_pos, obs_radius in obstacles:
         circle = plt.Circle((obs_pos[0], obs_pos[1]), obs_radius,
                            color='blue', alpha=0.4, linewidth=2, fill=True, zorder=4)
         plt.gca().add_patch(circle)
 
-    # Plot start/goal
+
     plt.scatter(start_pos[0], start_pos[1], c='green', s=300,
                marker='o', edgecolors='black', linewidths=3, label='Start', zorder=10)
     plt.scatter(goal_pos[0], goal_pos[1], c='red', s=300,
                marker='*', edgecolors='black', linewidths=3, label='Goal', zorder=10)
 
-    # Count outcomes
+
     n_success = sum(i['is_success'] for i in all_infos)
     n_crash = sum(i['is_crash'] for i in all_infos)
     n_timeout = len(all_infos) - n_success - n_crash
@@ -269,7 +242,7 @@ def main():
     print("MULTIPLE FLIGHTS VISUALIZATION")
     print("=" * 60)
 
-    # Collect trajectories
+
     all_trajectories, all_infos, start_pos, goal_pos, obstacles = collect_trajectories(
         model_path=args.model,
         vec_normalize_path=args.normalize,
@@ -277,7 +250,7 @@ def main():
         seed=args.seed
     )
 
-    # Generate plots
+
     plot_heatmap(all_trajectories, start_pos, goal_pos, obstacles,
                 output_path=f"{args.output}/heatmap_seed{args.seed}.png")
 

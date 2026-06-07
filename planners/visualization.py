@@ -1,7 +1,3 @@
-"""
-Visualization utilities for RRT* planner.
-"""
-
 import numpy as np
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
@@ -17,21 +13,10 @@ def visualize_rrt_tree_3d(
     obstacles: List = None,
     save_path: str = None
 ):
-    """
-    Visualize RRT* tree and path in 3D.
-
-    Args:
-        planner: RRTStarPlanner instance
-        path: Planned path waypoints
-        start: Start position
-        goal: Goal position
-        obstacles: List of obstacles
-        save_path: Path to save figure (optional)
-    """
     fig = plt.figure(figsize=(12, 10))
     ax = fig.add_subplot(111, projection='3d')
 
-    # Draw arena bounds
+
     ax.set_xlim(-config.ARENA_SIZE_X/2, config.ARENA_SIZE_X/2)
     ax.set_ylim(-config.ARENA_SIZE_Y/2, config.ARENA_SIZE_Y/2)
     ax.set_zlim(0, config.ARENA_HEIGHT)
@@ -40,14 +25,14 @@ def visualize_rrt_tree_3d(
     ax.set_zlabel('Z (m)')
     ax.set_title('RRT* Tree and Path')
 
-    # Draw obstacles
+
     if obstacles:
         for obs in obstacles:
             pos = obs.get_position()
             radius = obs.radius
             height = obs.height
 
-            # Draw cylinder
+
             theta = np.linspace(0, 2*np.pi, 30)
             z_cyl = np.linspace(pos[2], pos[2] + height, 20)
             theta_grid, z_grid = np.meshgrid(theta, z_cyl)
@@ -56,7 +41,7 @@ def visualize_rrt_tree_3d(
 
             ax.plot_surface(x_cyl, y_cyl, z_grid, alpha=0.3, color='gray')
 
-    # Draw tree edges
+
     edges = planner.get_tree_edges()
     for parent_pos, child_pos in edges:
         ax.plot([parent_pos[0], child_pos[0]],
@@ -64,13 +49,13 @@ def visualize_rrt_tree_3d(
                 [parent_pos[2], child_pos[2]],
                 'b-', alpha=0.2, linewidth=0.5)
 
-    # Draw tree nodes
+
     if len(planner.nodes) > 0:
         positions = np.array([node.position for node in planner.nodes])
         ax.scatter(positions[:, 0], positions[:, 1], positions[:, 2],
                    c='blue', s=5, alpha=0.3, label='Tree nodes')
 
-    # Draw path
+
     if path is not None and len(path) > 0:
         path_array = np.array(path)
         ax.plot(path_array[:, 0], path_array[:, 1], path_array[:, 2],
@@ -78,7 +63,7 @@ def visualize_rrt_tree_3d(
         ax.scatter(path_array[:, 0], path_array[:, 1], path_array[:, 2],
                    c='red', s=50, zorder=11)
 
-    # Draw start and goal
+
     if start is not None:
         ax.scatter([start[0]], [start[1]], [start[2]],
                    c='green', s=200, marker='o', label='Start', zorder=12)
@@ -106,21 +91,9 @@ def visualize_rrt_tree_2d(
     view: str = 'xy',
     save_path: str = None
 ):
-    """
-    Visualize RRT* tree and path in 2D (top-down or side view).
-
-    Args:
-        planner: RRTStarPlanner instance
-        path: Planned path waypoints
-        start: Start position
-        goal: Goal position
-        obstacles: List of obstacles
-        view: 'xy' (top-down), 'xz' (side), or 'yz' (side)
-        save_path: Path to save figure (optional)
-    """
     fig, ax = plt.subplots(figsize=(10, 10))
 
-    # Select axes based on view
+
     if view == 'xy':
         idx1, idx2 = 0, 1
         label1, label2 = 'X (m)', 'Y (m)'
@@ -145,42 +118,42 @@ def visualize_rrt_tree_2d(
     ax.set_aspect('equal')
     ax.grid(True, alpha=0.3)
 
-    # Draw obstacles
+
     if obstacles:
         for obs in obstacles:
             pos = obs.get_position()
             radius = obs.radius
 
             if view == 'xy':
-                # Top-down: draw circle
+
                 circle = plt.Circle((pos[0], pos[1]), radius, color='gray', alpha=0.5)
                 ax.add_patch(circle)
             else:
-                # Side view: draw rectangle
+
                 if view == 'xz':
                     rect = plt.Rectangle((pos[0] - radius, pos[2]),
                                           2*radius, obs.height,
                                           color='gray', alpha=0.5)
-                else:  # yz
+                else:
                     rect = plt.Rectangle((pos[1] - radius, pos[2]),
                                           2*radius, obs.height,
                                           color='gray', alpha=0.5)
                 ax.add_patch(rect)
 
-    # Draw tree edges
+
     edges = planner.get_tree_edges()
     for parent_pos, child_pos in edges:
         ax.plot([parent_pos[idx1], child_pos[idx1]],
                 [parent_pos[idx2], child_pos[idx2]],
                 'b-', alpha=0.2, linewidth=0.5)
 
-    # Draw tree nodes
+
     if len(planner.nodes) > 0:
         positions = np.array([node.position for node in planner.nodes])
         ax.scatter(positions[:, idx1], positions[:, idx2],
                    c='blue', s=10, alpha=0.3, label='Tree nodes')
 
-    # Draw path
+
     if path is not None and len(path) > 0:
         path_array = np.array(path)
         ax.plot(path_array[:, idx1], path_array[:, idx2],
@@ -188,7 +161,7 @@ def visualize_rrt_tree_2d(
         ax.scatter(path_array[:, idx1], path_array[:, idx2],
                    c='red', s=50, zorder=11)
 
-    # Draw start and goal
+
     if start is not None:
         ax.scatter([start[idx1]], [start[idx2]],
                    c='green', s=200, marker='o', label='Start', zorder=12)
@@ -213,16 +186,6 @@ def plot_path_comparison(
     obstacles: List = None,
     save_path: str = None
 ):
-    """
-    Compare multiple paths in 2D top-down view.
-
-    Args:
-        paths: List of (name, path) tuples
-        start: Start position
-        goal: Goal position
-        obstacles: List of obstacles
-        save_path: Path to save figure (optional)
-    """
     fig, ax = plt.subplots(figsize=(10, 10))
 
     ax.set_xlim(-config.ARENA_SIZE_X/2, config.ARENA_SIZE_X/2)
@@ -233,7 +196,7 @@ def plot_path_comparison(
     ax.set_aspect('equal')
     ax.grid(True, alpha=0.3)
 
-    # Draw obstacles
+
     if obstacles:
         for obs in obstacles:
             pos = obs.get_position()
@@ -241,7 +204,7 @@ def plot_path_comparison(
             circle = plt.Circle((pos[0], pos[1]), radius, color='gray', alpha=0.5)
             ax.add_patch(circle)
 
-    # Draw paths
+
     colors = ['red', 'blue', 'green', 'purple', 'orange']
     for i, (name, path) in enumerate(paths):
         if path is not None and len(path) > 0:
@@ -252,7 +215,7 @@ def plot_path_comparison(
             ax.scatter(path_array[:, 0], path_array[:, 1],
                        s=30, color=color)
 
-    # Draw start and goal
+
     ax.scatter([start[0]], [start[1]],
                c='green', s=200, marker='o', label='Start', zorder=12)
     ax.scatter([goal[0]], [goal[1]],
@@ -268,13 +231,6 @@ def plot_path_comparison(
 
 
 def plot_planning_stats(planners_data: List[Tuple[str, dict]]):
-    """
-    Plot planning statistics comparison.
-
-    Args:
-        planners_data: List of (name, stats_dict) tuples
-                       stats_dict should contain: 'time', 'cost', 'nodes', 'waypoints'
-    """
     fig, axes = plt.subplots(2, 2, figsize=(12, 10))
 
     names = [name for name, _ in planners_data]
@@ -283,25 +239,25 @@ def plot_planning_stats(planners_data: List[Tuple[str, dict]]):
     nodes = [data['nodes'] for _, data in planners_data]
     waypoints = [data['waypoints'] for _, data in planners_data]
 
-    # Planning time
+
     axes[0, 0].bar(names, times)
     axes[0, 0].set_ylabel('Time (s)')
     axes[0, 0].set_title('Planning Time')
     axes[0, 0].grid(True, alpha=0.3)
 
-    # Path cost
+
     axes[0, 1].bar(names, costs)
     axes[0, 1].set_ylabel('Cost (m)')
     axes[0, 1].set_title('Path Cost')
     axes[0, 1].grid(True, alpha=0.3)
 
-    # Tree nodes
+
     axes[1, 0].bar(names, nodes)
     axes[1, 0].set_ylabel('Nodes')
     axes[1, 0].set_title('Tree Nodes')
     axes[1, 0].grid(True, alpha=0.3)
 
-    # Waypoints
+
     axes[1, 1].bar(names, waypoints)
     axes[1, 1].set_ylabel('Waypoints')
     axes[1, 1].set_title('Path Waypoints')

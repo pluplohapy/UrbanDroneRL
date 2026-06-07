@@ -1,10 +1,3 @@
-"""
-Build large presentation-friendly comparison plots for selected training maps.
-
-The script reads structured diagnostics from logs/training_diagnostics and
-stitches retry runs of the same map into one readable curve. It is read-only
-with respect to logs and models; outputs are written under reports/training_plots.
-"""
 
 from __future__ import annotations
 
@@ -235,8 +228,8 @@ def build_map_frame(
 
         start_step = float(run_df["raw_timesteps"].iloc[0])
         relative_steps = run_df["raw_timesteps"] - start_step
-        # Some resumed runs contain one or more final snapshots near the same
-        # global timestep. Keep the line monotonic and readable.
+
+
         relative_steps = relative_steps.cummax()
         run_df["map"] = spec.key
         run_df["label"] = spec.label

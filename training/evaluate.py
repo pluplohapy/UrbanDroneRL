@@ -1,7 +1,3 @@
-"""
-Headless evaluation script for trained drone navigation policies.
-Computes success/crash/timeout rates and crash breakdown.
-"""
 
 import argparse
 import json
@@ -19,7 +15,7 @@ try:
 except ImportError:
     RecurrentPPO = None
 
-# Add project root to path to support `python training/evaluate.py`.
+
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from envs.nav_aviary import NavAviary

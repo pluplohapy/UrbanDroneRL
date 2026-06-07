@@ -129,10 +129,10 @@ def test_observation_contains_goal_in_body_frame_and_enhanced_features():
     np.testing.assert_allclose(rotated_obs[:3], np.array([2.0, 0.0, 0.5]) / max_dist, atol=1e-6)
 
     enhanced_start = 13 + env.raycast_sensor.n_rays
-    assert obs[enhanced_start] > 0.0  # radial velocity toward the goal
-    assert 0.0 <= obs[enhanced_start + 1] <= 1.0  # lateral speed
-    assert 0.0 <= obs[enhanced_start + 2] <= 1.0  # braking ratio
-    assert 0.0 <= obs[enhanced_start + 3] <= 1.0  # boundary clearance
+    assert obs[enhanced_start] > 0.0
+    assert 0.0 <= obs[enhanced_start + 1] <= 1.0
+    assert 0.0 <= obs[enhanced_start + 2] <= 1.0
+    assert 0.0 <= obs[enhanced_start + 3] <= 1.0
     np.testing.assert_allclose(obs[enhanced_start + 4:], np.zeros(env.raycast_sensor.n_rays), atol=1e-6)
 
 

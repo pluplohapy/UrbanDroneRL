@@ -1,6 +1,3 @@
-"""
-Comparison script: Train and compare performance with and without RRT* planner.
-"""
 
 import os
 import numpy as np
@@ -18,7 +15,6 @@ import config
 
 
 class ComparisonCallback(BaseCallback):
-    """Callback to track metrics for comparison."""
 
     def __init__(self, name, verbose=0):
         super().__init__(verbose)
@@ -42,7 +38,6 @@ class ComparisonCallback(BaseCallback):
         return True
 
     def get_stats(self):
-        """Get statistics for plotting."""
         return {
             'name': self.name,
             'rewards': self.episode_rewards,
@@ -53,7 +48,6 @@ class ComparisonCallback(BaseCallback):
 
 
 def make_env_baseline(rank, seed=0):
-    """Create baseline environment (no planner)."""
     def _init():
         scenario = Stage1Scenario(seed=seed + rank)
         env = NavAviary(scenario=scenario, gui=False)
@@ -63,7 +57,6 @@ def make_env_baseline(rank, seed=0):
 
 
 def make_env_planner(rank, seed=0):
-    """Create environment with RRT* planner."""
     def _init():
         scenario = Stage1Scenario(seed=seed + rank)
         env = NavAviaryWithPlanner(
@@ -86,12 +79,11 @@ def make_env_planner(rank, seed=0):
 
 
 def train_model(env_fns, name, total_timesteps=500000):
-    """Train a model and return callback with stats."""
     print(f"\n{'='*60}")
     print(f"TRAINING: {name}")
     print(f"{'='*60}")
 
-    # Create environment
+
     vec_env = SubprocVecEnv(env_fns)
     vec_env = VecNormalize(
         vec_env,
@@ -101,7 +93,7 @@ def train_model(env_fns, name, total_timesteps=500000):
         clip_reward=10.0
     )
 
-    # Create model
+
     model = PPO(
         **config.PPO_PARAMS,
         env=vec_env,
@@ -109,7 +101,7 @@ def train_model(env_fns, name, total_timesteps=500000):
         device="auto"
     )
 
-    # Train
+
     callback = ComparisonCallback(name=name)
     model.learn(
         total_timesteps=total_timesteps,
@@ -117,7 +109,7 @@ def train_model(env_fns, name, total_timesteps=500000):
         progress_bar=True
     )
 
-    # Save
+
     model_path = f"models/comparison_{name.lower().replace(' ', '_')}"
     model.save(model_path)
     vec_env.save(f"{model_path}_normalize.pkl")
@@ -129,15 +121,14 @@ def train_model(env_fns, name, total_timesteps=500000):
 
 
 def plot_comparison(stats_list):
-    """Plot comparison of training runs."""
     fig, axes = plt.subplots(2, 2, figsize=(14, 10))
 
     colors = ['blue', 'red', 'green', 'orange']
 
-    # Plot 1: Rewards over time
+
     ax = axes[0, 0]
     for i, stats in enumerate(stats_list):
-        # Moving average
+
         window = 50
         if len(stats['rewards']) >= window:
             rewards_smooth = np.convolve(
@@ -155,11 +146,11 @@ def plot_comparison(stats_list):
     ax.legend()
     ax.grid(True, alpha=0.3)
 
-    # Plot 2: Success rate over time
+
     ax = axes[0, 1]
     for i, stats in enumerate(stats_list):
         if len(stats['successes']) > 0:
-            # Moving average
+
             window = 50
             if len(stats['successes']) >= window:
                 success_smooth = np.convolve(
@@ -178,10 +169,10 @@ def plot_comparison(stats_list):
     ax.grid(True, alpha=0.3)
     ax.set_ylim([0, 1])
 
-    # Plot 3: Episode length over time
+
     ax = axes[1, 0]
     for i, stats in enumerate(stats_list):
-        # Moving average
+
         window = 50
         if len(stats['lengths']) >= window:
             lengths_smooth = np.convolve(
@@ -199,7 +190,7 @@ def plot_comparison(stats_list):
     ax.legend()
     ax.grid(True, alpha=0.3)
 
-    # Plot 4: Final statistics comparison
+
     ax = axes[1, 1]
     names = [s['name'] for s in stats_list]
     final_rewards = [np.mean(s['rewards'][-100:]) if len(s['rewards']) >= 100 else 0
@@ -241,25 +232,25 @@ def main():
 
     os.makedirs("models", exist_ok=True)
 
-    # Training parameters
-    n_envs = config.N_ENVS
-    total_timesteps = 500000  # Shorter for comparison
 
-    # Train baseline
+    n_envs = config.N_ENVS
+    total_timesteps = 500000
+
+
     print("\n" + "="*60)
     print("EXPERIMENT 1/2: Baseline (No Planner)")
     print("="*60)
     env_fns_baseline = [make_env_baseline(i, config.SEED) for i in range(n_envs)]
     stats_baseline = train_model(env_fns_baseline, "Baseline", total_timesteps)
 
-    # Train with planner
+
     print("\n" + "="*60)
     print("EXPERIMENT 2/2: With RRT* Planner")
     print("="*60)
     env_fns_planner = [make_env_planner(i, config.SEED) for i in range(n_envs)]
     stats_planner = train_model(env_fns_planner, "RRT* Planner", total_timesteps)
 
-    # Compare results
+
     print("\n" + "="*60)
     print("COMPARISON RESULTS")
     print("="*60)
@@ -282,7 +273,7 @@ def main():
             final_length = np.mean(stats['lengths'][-100:])
             print(f"  Final avg length (last 100): {final_length:.1f}")
 
-    # Plot comparison
+
     print("\n" + "="*60)
     print("GENERATING COMPARISON PLOTS")
     print("="*60)

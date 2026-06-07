@@ -1,29 +1,18 @@
-"""
-Base configuration - common parameters for all stages.
-"""
-
-# ===== SIMULATION PARAMETERS =====
-PYB_FREQ = 240  # Physics simulation frequency (Hz)
-CTRL_FREQ = 30  # Control frequency (Hz) - how often agent makes decisions
-MAX_STEPS = 1200  # Episode length in control steps (1200/30 = 40 seconds)
-
-# ===== DRONE CONTROL PARAMETERS =====
+PYB_FREQ = 240
+CTRL_FREQ = 30
+MAX_STEPS = 1200
 VX_MAX = 1.2
 VY_MAX = 1.2
-VZ_MAX = 0.8  # Was 0.8
+VZ_MAX = 0.8
 YAW_RATE_MAX = 0.8
-MAX_COMMAND_SPEED = 0.0  # 0 disables vector-norm speed clipping.
+MAX_COMMAND_SPEED = 0.0
 VELOCITY_TARGET_LOOKAHEAD_STEPS = 3.0
 
-# ===== RAYCASTS =====
-N_RAYS = 20  # Was 16
+N_RAYS = 20
 RAY_LENGTH = 5.0
 
-# ===== TRAINING PARAMETERS =====
 SEED = 42
-N_ENVS = 8  # Number of parallel environments
-
-# ===== PPO HYPERPARAMETERS =====
+N_ENVS = 8
 PPO_PARAMS = {
     "learning_rate": 1e-4,
     "n_steps": 2048,
@@ -40,7 +29,6 @@ PPO_PARAMS = {
     "sde_sample_freq": 8,
 }
 
-# ===== REWARD PARAMETERS (COMMON) =====
 REWARD_SUCCESS = 500
 REWARD_CRASH = -2200.0
 REWARD_TIMEOUT = -200.0
@@ -78,7 +66,6 @@ REWARD_EFFICIENCY_BONUS = True
 REWARD_EFFICIENCY_SCALE = 200.0
 EXPLORATION_GRID_SIZE = 1.0
 
-# ===== SAFETY SHIELD (ACTION FILTER) =====
 SAFETY_SHIELD_ENABLED = False
 SAFETY_SHIELD_SOFT_CLEARANCE = 1.2
 SAFETY_SHIELD_HARD_CLEARANCE = 0.7
@@ -89,7 +76,6 @@ SAFETY_SHIELD_TOPK = 3
 SAFETY_SHIELD_VERTICAL_GAIN = 0.3
 SAFETY_SHIELD_HARD_BRAKE_SCALE = 0.5
 
-# ===== COMMON PARAMETERS =====
 MIN_CLEARANCE = 1.0
 SUCCESS_DIST = 0.45
 SUCCESS_HOLD_RADIUS = 0.45

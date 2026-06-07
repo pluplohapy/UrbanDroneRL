@@ -1,10 +1,3 @@
-"""
-Render presentation-ready screenshots of generated pretrain maps.
-
-Examples:
-    python visualization/render_map_images.py
-    python visualization/render_map_images.py --maps cylinders beams city_dynamic
-"""
 
 import argparse
 import math

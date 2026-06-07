@@ -1,10 +1,3 @@
-"""
-Generate publication-friendly training plots from TensorBoard, eval history,
-and structured diagnostics logs.
-
-The script is intentionally read-only: it does not touch checkpoints or logs.
-It writes figures and CSV snapshots under reports/training_plots/<timestamp>.
-"""
 
 from __future__ import annotations
 
@@ -28,7 +21,7 @@ import pandas as pd
 
 try:
     from tensorboard.backend.event_processing import event_accumulator
-except Exception:  # pragma: no cover - optional runtime dependency
+except Exception:
     event_accumulator = None
 
 
@@ -241,7 +234,6 @@ def setup_style(presentation: bool = False) -> None:
 
 
 def sci_tick(value: float, _position: int | None = None) -> str:
-    """Compact tick labels for training steps, e.g. 1E5 instead of 100000."""
     if not np.isfinite(value):
         return ""
     if abs(value) < 1e-9:
@@ -322,7 +314,6 @@ def stitch_run_steps(
     group_col: str,
     gap_steps: float = 0.0,
 ) -> pd.DataFrame:
-    """Make retry/continue runs consecutive on the X axis instead of overlapping."""
     if df.empty or x_col not in df.columns or group_col not in df.columns:
         return df
 
@@ -470,7 +461,6 @@ def plot_grouped_lines(
 
 
 def merge_runs_for_plots(df: pd.DataFrame, label: str) -> pd.DataFrame:
-    """Draw selected runs as one continuous series after optional X-axis stitching."""
     if df.empty or not label:
         return df
     df = df.copy()

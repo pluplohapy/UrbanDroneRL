@@ -1,17 +1,5 @@
-"""
-Legacy config.py - for backward compatibility.
-Imports from new config/ structure.
-
-New code should use:
-    from config import load_config
-    config = load_config('pretrain')
-"""
-
-# Import everything from base config for backward compatibility
 from config.base import *
 from config.debug import *
-
-# Import stage-specific parameters
 from config.stage0 import (
     ARENA_SIZE_X, ARENA_SIZE_Y, ARENA_HEIGHT, MIN_START_GOAL_DIST
 )
@@ -19,13 +7,11 @@ from config.stage0 import (
 from config.stage1 import (
     STAGE1_N_OBSTACLES, STAGE1_RADIUS, STAGE1_HEIGHT
 )
-
-# For new code, use load_config
 from config import load_config
 
 __all__ = [
     'load_config',
-    # Base
+
     'PYB_FREQ', 'CTRL_FREQ', 'MAX_STEPS',
     'VX_MAX', 'VY_MAX', 'VZ_MAX', 'YAW_RATE_MAX',
     'N_RAYS', 'RAY_LENGTH',
@@ -48,10 +34,10 @@ __all__ = [
     'GOAL_VEL_SOFT_RADIUS', 'GOAL_VEL_MIN_SCALE',
     'WAYPOINT_THRESHOLD', 'OUT_OF_BOUNDS_EPS',
     'BOUNDARY_VEL_SOFT_MARGIN', 'BOUNDARY_VEL_MIN_SCALE',
-    # Stage specific
+
     'ARENA_SIZE_X', 'ARENA_SIZE_Y', 'ARENA_HEIGHT', 'MIN_START_GOAL_DIST',
     'STAGE1_N_OBSTACLES', 'STAGE1_RADIUS', 'STAGE1_HEIGHT',
-    # Debug
+
     'DEBUG_MODE', 'LOG_REWARD_COMPONENTS', 'LOG_NAVIGATION_METRICS',
     'LOG_PATH_FOLLOWING_METRICS', 'LOG_EPISODE_METRICS',
     'LOG_EXTENDED_EPISODE_METRICS', 'LOG_TIMEOUT_ANALYSIS',

@@ -1,13 +1,9 @@
-"""
-Pretrain obstacles library - diverse obstacle types for curriculum learning.
-"""
 
 import numpy as np
 import pybullet as p
 
 
 class CylinderObstacle:
-    """Cylindrical obstacle (столб)."""
 
     def __init__(self, position, radius, height, physics_client):
         self.position = position
@@ -16,7 +12,7 @@ class CylinderObstacle:
         self.client = physics_client
         self.dynamic = False
 
-        # Create collision shape
+
         collision_shape = p.createCollisionShape(
             p.GEOM_CYLINDER,
             radius=radius,
@@ -24,7 +20,7 @@ class CylinderObstacle:
             physicsClientId=self.client
         )
 
-        # Create visual shape
+
         visual_shape = p.createVisualShape(
             p.GEOM_CYLINDER,
             radius=radius,
@@ -33,7 +29,7 @@ class CylinderObstacle:
             physicsClientId=self.client
         )
 
-        # Create body
+
         self.body_id = p.createMultiBody(
             baseMass=0,
             baseCollisionShapeIndex=collision_shape,
@@ -46,7 +42,7 @@ class CylinderObstacle:
         return self.position
 
     def update(self, dt):
-        pass  # Static
+        pass
 
     def cleanup(self):
         if self.body_id is not None:
@@ -55,7 +51,6 @@ class CylinderObstacle:
 
 
 class SphereObstacle:
-    """Spherical obstacle with sinusoidal movement (птица)."""
 
     def __init__(
         self,
@@ -92,14 +87,14 @@ class SphereObstacle:
                 direction = direction / norm
             self.direction = direction
 
-        # Create collision shape
+
         collision_shape = p.createCollisionShape(
             p.GEOM_SPHERE,
             radius=radius,
             physicsClientId=self.client
         )
 
-        # Create visual shape
+
         visual_shape = p.createVisualShape(
             p.GEOM_SPHERE,
             radius=radius,
@@ -107,7 +102,7 @@ class SphereObstacle:
             physicsClientId=self.client
         )
 
-        # Create body
+
         self.body_id = p.createMultiBody(
             baseMass=0,
             baseCollisionShapeIndex=collision_shape,
@@ -120,16 +115,15 @@ class SphereObstacle:
         return self.position
 
     def update(self, dt):
-        """Sinusoidal movement."""
         self.time += dt
 
-        # Sinusoidal offset
+
         offset = self.amplitude * np.sin(self.angular_frequency * self.time + self.phase)
 
-        # Update position
+
         self.position = self.initial_position + self.direction * offset
 
-        # Update PyBullet body
+
         p.resetBasePositionAndOrientation(
             self.body_id,
             self.position,
@@ -144,7 +138,6 @@ class SphereObstacle:
 
 
 class WallObstacle:
-    """Vertical wall obstacle."""
 
     def __init__(self, position, width, height, thickness, physics_client):
         self.position = position
@@ -154,14 +147,14 @@ class WallObstacle:
         self.client = physics_client
         self.dynamic = False
 
-        # Create collision shape (box)
+
         collision_shape = p.createCollisionShape(
             p.GEOM_BOX,
             halfExtents=[width/2, thickness/2, height/2],
             physicsClientId=self.client
         )
 
-        # Create visual shape
+
         visual_shape = p.createVisualShape(
             p.GEOM_BOX,
             halfExtents=[width/2, thickness/2, height/2],
@@ -169,7 +162,7 @@ class WallObstacle:
             physicsClientId=self.client
         )
 
-        # Create body
+
         self.body_id = p.createMultiBody(
             baseMass=0,
             baseCollisionShapeIndex=collision_shape,
@@ -178,14 +171,14 @@ class WallObstacle:
             physicsClientId=self.client
         )
 
-        # For collision checking (treat as cylinder with large radius)
+
         self.radius = max(width, thickness) / 2
 
     def get_position(self):
         return self.position
 
     def update(self, dt):
-        pass  # Static
+        pass
 
     def cleanup(self):
         if self.body_id is not None:
@@ -194,7 +187,6 @@ class WallObstacle:
 
 
 class BeamObstacle:
-    """Horizontal beam obstacle that can swing around a chosen axis."""
 
     def __init__(
         self,
@@ -220,14 +212,14 @@ class BeamObstacle:
         self.swing_axis = swing_axis
         self.phase = phase
 
-        # Create collision shape (box)
+
         collision_shape = p.createCollisionShape(
             p.GEOM_BOX,
             halfExtents=[length/2, thickness/2, thickness/2],
             physicsClientId=self.client
         )
 
-        # Create visual shape
+
         visual_shape = p.createVisualShape(
             p.GEOM_BOX,
             halfExtents=[length/2, thickness/2, thickness/2],
@@ -235,7 +227,7 @@ class BeamObstacle:
             physicsClientId=self.client
         )
 
-        # Create body
+
         self.body_id = p.createMultiBody(
             baseMass=0,
             baseCollisionShapeIndex=collision_shape,
@@ -245,7 +237,7 @@ class BeamObstacle:
             physicsClientId=self.client
         )
 
-        # For collision checking
+
         self.radius = max(length, thickness) / 2
 
     def get_position(self):
@@ -263,13 +255,12 @@ class BeamObstacle:
         return p.getQuaternionFromEuler([0, 0, angle])
 
     def update(self, dt):
-        """Swinging motion."""
         if not self.dynamic:
             return
 
         self.time += dt
 
-        # Update orientation
+
         p.resetBasePositionAndOrientation(
             self.body_id,
             [self.position[0], self.position[1], self.height],
@@ -284,7 +275,6 @@ class BeamObstacle:
 
 
 class BoxObstacle:
-    """Box/cube obstacle."""
 
     def __init__(self, position, size, height, physics_client, depth=None, rgba_color=None):
         self.position = position
@@ -295,14 +285,14 @@ class BoxObstacle:
         self.dynamic = False
         self.rgba_color = rgba_color or [0.3, 0.3, 0.6, 1.0]
 
-        # Create collision shape
+
         collision_shape = p.createCollisionShape(
             p.GEOM_BOX,
             halfExtents=[size/2, self.depth/2, height/2],
             physicsClientId=self.client
         )
 
-        # Create visual shape
+
         visual_shape = p.createVisualShape(
             p.GEOM_BOX,
             halfExtents=[size/2, self.depth/2, height/2],
@@ -310,7 +300,7 @@ class BoxObstacle:
             physicsClientId=self.client
         )
 
-        # Create body
+
         self.body_id = p.createMultiBody(
             baseMass=0,
             baseCollisionShapeIndex=collision_shape,
@@ -319,14 +309,14 @@ class BoxObstacle:
             physicsClientId=self.client
         )
 
-        # For collision checking
+
         self.radius = max(size, self.depth) / 2
 
     def get_position(self):
         return self.position
 
     def update(self, dt):
-        pass  # Static
+        pass
 
     def cleanup(self):
         if self.body_id is not None:
@@ -335,7 +325,6 @@ class BoxObstacle:
 
 
 class MovingBoxObstacle:
-    """Rectangular dynamic obstacle with sinusoidal motion, useful for cars."""
 
     def __init__(
         self,
@@ -414,7 +403,6 @@ class MovingBoxObstacle:
 
 
 class SwingingStickObstacle:
-    """Swinging stick obstacle (ветка)."""
 
     def __init__(
         self,
@@ -440,15 +428,15 @@ class SwingingStickObstacle:
         self.vertical_swing = vertical_swing
         self.phase = phase
 
-        # For collision checking
+
         self.radius = length / 2
-        self.height = 0  # Horizontal stick, no vertical extent for clearance check
+        self.height = 0
 
-        # Vertical movement parameters (like branches in wind)
-        self.vertical_amplitude = vertical_amplitude  # From config
-        self.vertical_frequency = 1.0 / swing_period  # Sync with swing
 
-        # Create collision shape (capsule)
+        self.vertical_amplitude = vertical_amplitude
+        self.vertical_frequency = 1.0 / swing_period
+
+
         collision_shape = p.createCollisionShape(
             p.GEOM_CAPSULE,
             radius=thickness,
@@ -456,7 +444,7 @@ class SwingingStickObstacle:
             physicsClientId=self.client
         )
 
-        # Create visual shape
+
         visual_shape = p.createVisualShape(
             p.GEOM_CAPSULE,
             radius=thickness,
@@ -468,7 +456,7 @@ class SwingingStickObstacle:
         initial_position, initial_quat = self._body_state()
         self.position = initial_position
 
-        # Create body
+
         self.body_id = p.createMultiBody(
             baseMass=0,
             baseCollisionShapeIndex=collision_shape,
@@ -499,7 +487,6 @@ class SwingingStickObstacle:
         return new_position, quat
 
     def update(self, dt):
-        """Swinging motion around anchor point with vertical movement."""
         self.time += dt
 
         new_position, quat = self._body_state()

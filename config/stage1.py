@@ -1,21 +1,14 @@
-"""
-Stage 1 configuration - static cylindrical obstacles.
-"""
-
 from .base import *
 
-# ===== ARENA PARAMETERS =====
 ARENA_SIZE_X = 15.0
 ARENA_SIZE_Y = 15.0
 ARENA_HEIGHT = 5.0
 MIN_START_GOAL_DIST = 8.0
 
-# ===== OBSTACLE PARAMETERS =====
 STAGE1_N_OBSTACLES = (8, 12)
 STAGE1_RADIUS = (0.25, 0.50)
 STAGE1_HEIGHT = (2.5, 5.0)
 
-# ===== RRT* PLANNER PARAMETERS =====
 RRT_MAX_ITER = 300
 RRT_STEP_SIZE = 1.5
 RRT_GOAL_BIAS = 0.2

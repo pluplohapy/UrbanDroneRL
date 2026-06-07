@@ -1,8 +1,3 @@
-"""
-Stage 1: Static obstacles scenario.
-Adds cylindrical obstacles that drone must navigate around.
-"""
-
 import numpy as np
 import pybullet as p
 from scenarios.base_scenario import BaseScenario
@@ -11,132 +6,94 @@ from config import load_config
 
 
 class Stage1Scenario(BaseScenario):
-    """Stage 1 with static cylindrical obstacles."""
 
     def __init__(self, seed=None):
-        """
-        Initialize Stage 1 scenario.
-
-        Args:
-            seed: Random seed for reproducibility
-        """
         super().__init__(seed)
         self.config = load_config('1')
         self.n_obstacles = 0
         self.client_id = None
 
     def generate(self, client_id):
-        """
-        Generate scenario: create obstacles and return start/goal.
-        Same as reset() for Stage 1.
-
-        Args:
-            client_id: PyBullet client ID
-
-        Returns:
-            start_pos, goal_pos: Starting and goal positions
-        """
         return self.reset(client_id)
 
     def reset(self, client_id):
-        """
-        Reset scenario: generate start/goal and create obstacles.
 
-        Args:
-            client_id: PyBullet client ID
-
-        Returns:
-            start_pos, goal_pos: Starting and goal positions
-        """
-        # Store client_id
         self.client_id = client_id
 
-        # Clear obstacles list (p.resetSimulation() already removed them)
+
         self.obstacles = []
 
-        # Generate start and goal positions
+
         start_pos, goal_pos = self._generate_start_goal()
 
-        # Generate random number of obstacles
+
         self.n_obstacles = self.rng.randint(
             self.config.STAGE1_N_OBSTACLES[0],
             self.config.STAGE1_N_OBSTACLES[1] + 1
         )
 
-        # Create obstacles
-        # print(f"[Stage1] Creating {self.n_obstacles} obstacles...")
+
+
         for i in range(self.n_obstacles):
-            # Random radius and position
+
             radius = self.rng.uniform(
                 self.config.STAGE1_RADIUS[0],
                 self.config.STAGE1_RADIUS[1]
             )
 
-            # Try to find valid position (not blocking start/goal)
+
             max_attempts = 50
             for attempt in range(max_attempts):
                 x = self.rng.uniform(-self.config.ARENA_SIZE_X/2 + 1, self.config.ARENA_SIZE_X/2 - 1)
                 y = self.rng.uniform(-self.config.ARENA_SIZE_Y/2 + 1, self.config.ARENA_SIZE_Y/2 - 1)
-                pos = np.array([x, y, 0.0])  # z=0 is bottom of cylinder
+                pos = np.array([x, y, 0.0])
 
-                # Check clearance from start and goal
+
                 dist_to_start = np.linalg.norm(pos[:2] - start_pos[:2])
                 dist_to_goal = np.linalg.norm(pos[:2] - goal_pos[:2])
 
                 if (dist_to_start < self.config.MIN_CLEARANCE + radius or
                     dist_to_goal < self.config.MIN_CLEARANCE + radius):
-                    continue  # Too close to start or goal
+                    continue
 
-                # Check if obstacle blocks direct path from start to goal
+
                 line_vec = goal_pos[:2] - start_pos[:2]
                 line_length = np.linalg.norm(line_vec)
 
                 if line_length > 0:
                     line_dir = line_vec / line_length
 
-                    # Vector from start to obstacle
+
                     start_to_obs = pos[:2] - start_pos[:2]
 
-                    # Project onto line
+
                     projection = np.dot(start_to_obs, line_dir)
 
-                    # Check if projection is within line segment
+
                     if 0 < projection < line_length:
-                        # Find perpendicular distance to line
+
                         perpendicular = start_to_obs - projection * line_dir
                         dist_to_line = np.linalg.norm(perpendicular)
 
-                        # If too close to direct path, skip this position
-                        if dist_to_line < self.config.MIN_CLEARANCE + radius:
-                            continue  # Blocks direct path
 
-                # Valid position found
+                        if dist_to_line < self.config.MIN_CLEARANCE + radius:
+                            continue
+
+
                 obstacle = StaticObstacle(
                     position=pos,
                     radius=radius,
-                    height=self.config.ARENA_HEIGHT,  # Full height cylinder
+                    height=self.config.ARENA_HEIGHT,
                     physics_client=client_id
                 )
                 self.obstacles.append(obstacle)
-                # print(f"[Stage1]   Obstacle {i+1}: pos=[{pos[0]:.2f}, {pos[1]:.2f}], radius={radius:.2f}, body_id={obstacle.body_id}")
+
                 break
 
         return start_pos, goal_pos
 
     def update_dynamic_obstacles(self, dt):
-        """
-        Update dynamic obstacles (none in Stage 1).
-
-        Args:
-            dt: Time step
-        """
-        pass  # No dynamic obstacles in Stage 1
+        pass
 
     def get_obstacles(self):
-        """
-        Get list of obstacles.
-
-        Returns:
-            List of obstacle objects
-        """
         return self.obstacles

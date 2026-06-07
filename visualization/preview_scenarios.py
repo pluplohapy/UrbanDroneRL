@@ -1,12 +1,3 @@
-"""
-Preview scenario generation without drone flight.
-Shows how obstacles are generated and positioned.
-
-Usage:
-    python visualization/preview_scenarios.py --stage pretrain --obstacle-type random --duration 5
-    python visualization/preview_scenarios.py --stage 0 --duration 10
-    python visualization/preview_scenarios.py --stage 1 --duration 5
-"""
 
 import argparse
 import time
@@ -14,7 +5,7 @@ import sys
 import os
 import numpy as np
 
-# Add parent directory to path
+
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import pybullet as p
@@ -44,7 +35,6 @@ PRETRAIN_OBSTACLE_CHOICES = (
 
 
 def add_marker(position, color, size=0.2, client_id=0):
-    """Add a visual marker at position."""
     visual_shape = p.createVisualShape(
         p.GEOM_SPHERE,
         radius=size,
@@ -63,7 +53,6 @@ def add_marker(position, color, size=0.2, client_id=0):
 
 
 def add_line(start, end, color, width=3, client_id=0):
-    """Add a line between two points."""
     return p.addUserDebugLine(
         start, end, color, lineWidth=width,
         physicsClientId=client_id
@@ -71,20 +60,11 @@ def add_line(start, end, color, width=3, client_id=0):
 
 
 def preview_scenario(stage, obstacle_type, duration, continuous):
-    """
-    Preview scenario generation.
 
-    Args:
-        stage: Stage type ('0', '1', 'pretrain')
-        obstacle_type: Obstacle type for pretrain
-        duration: Seconds to show each scenario
-        continuous: If True, regenerate continuously
-    """
-    # Connect to PyBullet
     client = p.connect(p.GUI)
     p.setAdditionalSearchPath(pybullet_data.getDataPath())
 
-    # Setup camera
+
     p.resetDebugVisualizerCamera(
         cameraDistance=20,
         cameraYaw=45,
@@ -93,20 +73,20 @@ def preview_scenario(stage, obstacle_type, duration, continuous):
         physicsClientId=client
     )
 
-    # Load config
+
     config = load_config(stage)
     if stage == "pretrain":
         config = apply_pretrain_obstacle_overrides(config, obstacle_type)
 
-    # Add ground plane
+
     p.loadURDF("plane.urdf", physicsClientId=client)
 
-    # Add arena boundaries (visual only)
+
     arena_x = config.ARENA_SIZE_X
     arena_y = config.ARENA_SIZE_Y
     arena_h = config.ARENA_HEIGHT
 
-    # Draw arena box
+
     corners = [
         [-arena_x/2, -arena_y/2, 0],
         [arena_x/2, -arena_y/2, 0],
@@ -115,11 +95,11 @@ def preview_scenario(stage, obstacle_type, duration, continuous):
     ]
 
     for i in range(4):
-        # Bottom edges
+
         p.addUserDebugLine(corners[i], corners[(i+1)%4], [0.5, 0.5, 0.5], lineWidth=2, physicsClientId=client)
-        # Vertical edges
+
         p.addUserDebugLine(corners[i], [corners[i][0], corners[i][1], arena_h], [0.5, 0.5, 0.5], lineWidth=2, physicsClientId=client)
-        # Top edges
+
         top_i = [corners[i][0], corners[i][1], arena_h]
         top_next = [corners[(i+1)%4][0], corners[(i+1)%4][1], arena_h]
         p.addUserDebugLine(top_i, top_next, [0.5, 0.5, 0.5], lineWidth=2, physicsClientId=client)
@@ -143,15 +123,15 @@ def preview_scenario(stage, obstacle_type, duration, continuous):
             scenario_count += 1
             print(f"\n[Scenario {scenario_count}]")
 
-            # Create scenario
+
             if stage == '0':
                 scenario = Stage0Scenario()
             elif stage == '1':
                 scenario = Stage1Scenario()
-            else:  # pretrain
+            else:
                 scenario = StagePretrainScenario(obstacle_type=obstacle_type)
 
-            # Generate
+
             start_pos, goal_pos = scenario.reset(client)
 
             print(f"  Start: [{start_pos[0]:.2f}, {start_pos[1]:.2f}, {start_pos[2]:.2f}]")
@@ -163,35 +143,35 @@ def preview_scenario(stage, obstacle_type, duration, continuous):
             if stage != '0':
                 print(f"  Obstacles: {len(scenario.obstacles)}")
 
-                # Count dynamic obstacles
+
                 dynamic_count = sum(1 for obs in scenario.obstacles
                                   if hasattr(obs, 'dynamic') and obs.dynamic)
                 if dynamic_count > 0:
                     print(f"  Dynamic obstacles: {dynamic_count}")
 
-            # Add start marker (green)
+
             start_marker = add_marker(start_pos, [0, 1, 0, 1], size=0.3, client_id=client)
             markers.append(start_marker)
 
-            # Add goal marker (red)
+
             goal_marker = add_marker(goal_pos, [1, 0, 0, 1], size=0.3, client_id=client)
             markers.append(goal_marker)
 
-            # Add line between start and goal (yellow)
+
             line = add_line(start_pos, goal_pos, [1, 1, 0], width=2, client_id=client)
             lines.append(line)
 
-            # Show for duration seconds
+
             start_time = time.time()
             while time.time() - start_time < duration:
-                # Update dynamic obstacles
+
                 scenario.update_dynamic_obstacles(0.01)
                 p.stepSimulation(physicsClientId=client)
                 time.sleep(0.01)
 
-            # Clean up for next scenario
+
             if continuous:
-                # Remove markers and lines
+
                 for marker in markers:
                     p.removeBody(marker, physicsClientId=client)
                 markers.clear()
@@ -200,7 +180,7 @@ def preview_scenario(stage, obstacle_type, duration, continuous):
                     p.removeUserDebugItem(line, physicsClientId=client)
                 lines.clear()
 
-                # Clean up scenario
+
                 scenario.cleanup()
             else:
                 break

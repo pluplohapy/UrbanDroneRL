@@ -1,16 +1,10 @@
-"""
-Stage 0 configuration - empty arena.
-"""
-
 from .base import *
 
-# ===== ARENA PARAMETERS =====
 ARENA_SIZE_X = 15.0
 ARENA_SIZE_Y = 15.0
 ARENA_HEIGHT = 5.0
 MIN_START_GOAL_DIST = 8.0
 
-# ===== RRT* PLANNER PARAMETERS =====
 RRT_MAX_ITER = 300
 RRT_STEP_SIZE = 1.5
 RRT_GOAL_BIAS = 0.3

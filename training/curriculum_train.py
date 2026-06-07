@@ -1,12 +1,3 @@
-"""
-Night curriculum runner for pretrain obstacle types.
-
-The script trains one obstacle family at a time, evaluates the current best
-policy, and moves to the next family once the requested success rate is reached.
-It is intentionally a thin orchestrator around training/train.py and
-training/evaluate.py so normal checkpoints, VecNormalize files, diagnostics and
-eval logs keep their existing format.
-"""
 
 from __future__ import annotations
 

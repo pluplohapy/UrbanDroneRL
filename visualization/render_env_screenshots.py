@@ -1,12 +1,3 @@
-"""
-Render screenshots from the actual NavAviary environment.
-
-This is closer to visualization/visualize.py than render_map_images.py:
-the drone environment is created, reset, and then captured with PyBullet.
-
-Examples:
-    python visualization/render_env_screenshots.py
-"""
 
 import argparse
 import math
