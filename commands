@@ -1,0 +1,90 @@
+train:
+python training/train.py --stage pretrain --obstacle-type cylinders --timesteps 25000000 --continue --no-safety-shield --eval --eval-freq 50000 --eval-episodes 20
+
+python training/train.py \
+  --stage pretrain \
+  --obstacle-type dynamic_mix \
+  --continue \
+  --init-model models/ppo_pretrain_cylinders.zip \
+  --init-normalize models/vec_normalize_pretrain_cylinders.pkl \
+  --timesteps 4000000 \
+  --no-safety-shield \
+  --eval --eval-freq 50000 --eval-episodes 20;
+
+python training/train.py \
+  --stage pretrain \
+  --obstacle-type dynamic_mix \
+  --continue \
+  --init-model models/ppo_pretrain_dynamic_mix.zip \
+  --init-normalize models/vec_normalize_pretrain_dynamic_mix.pkl \
+  --timesteps 4000000 \
+  --no-safety-shield \
+  --eval --eval-freq 50000 --eval-episodes 20;
+
+python training/train.py \
+  --algo recurrent_ppo \
+  --stage pretrain \
+  --obstacle-type cylinders \
+  --timesteps 5000000 \
+  --no-safety-shield \
+  --eval-episodes 50 \
+  --continue
+
+python training/train.py \
+  --algo recurrent_ppo \
+  --stage pretrain \
+  --obstacle-type dynamic_mix \
+  --timesteps 5000000 \
+  --no-safety-shield \
+  --eval-episodes 50 \
+  --continue
+
+night curriculum after cylinders:
+python training/curriculum_train.py \
+  --algo ppo \
+  --start-model models/ppo_pretrain_cylinders.zip \
+  --start-normalize models/vec_normalize_pretrain_cylinders.pkl \
+  --chunk-timesteps 1000000 \
+  --max-rounds-per-stage 3 \
+  --eval-episodes 50 \
+  --train-eval-episodes 20 \
+  --eval-freq 50000
+
+
+
+evaluate:
+# main model + cylinders - nothing
+python training/evaluate.py --model models/ppo_pretrain_dynamic_mix.zip --normalize models/vec_normalize_pretrain_dynamic_mix.pkl --stage pretrain --obstacle-type cylinders --episodes 50 --seed 12345 --no-safety-shield --json-out reports/eval_main_after_fix.json
+# main model + dynamic_mix - nothing
+python training/evaluate.py --model models/ppo_pretrain_dynamic_mix.zip --normalize models/vec_normalize_pretrain_dynamic_mix.pkl --stage pretrain --obstacle-type dynamic_mix  --episodes 50 --seed 12345 --no-safety-shield --json-out reports/eval_main_after_fix.json;
+
+# main model + LSTM
+python training/evaluate.py --algo recurrent_ppo --model models/recurrent_ppo_pretrain_dynamic_mix.zip --normalize models/vec_normalize_recurrent_ppo_pretrain_dynamic_mix.pkl --stage pretrain --obstacle-type dynamic_mix --episodes 50 --seed 12345 --no-safety-shield --json-out reports/eval_recurrent_ppo_dynamic_mix.json
+# best model + LSTM
+python training/evaluate.py --algo recurrent_ppo --model models/best_checkpoints/RecurrentPPO_pretrain_dynamic_mix/best_model.zip --normalize models/best_checkpoints/RecurrentPPO_pretrain_dynamic_mix/best_model_vecnormalize.pkl --stage pretrain --obstacle-type dynamic_mix --episodes 50 --seed 12345 --no-safety-shield
+
+
+
+visualize:
+python visualization/visualize.py --model models/ppo_pretrain_dynamic_mix.zip --normalize models/vec_normalize_pretrain_dynamic_mix.pkl --stage pretrain --obstacle-type dynamic_mix --no-safety-shield --episodes 20
+python visualization/visualize.py --model models/best_checkpoints/PPO_pretrain_dynamic_mix/best_model.zip --normalize models/best_checkpoints/PPO_pretrain_dynamic_mix/best_model_vecnormalize.pkl --stage pretrain --obstacle-type dynamic_mix --no-safety-shield --episodes 20
+
+# main model + LSTM + cylinders
+python visualization/visualize.py --algo recurrent_ppo --model models/recurrent_ppo_pretrain_cylinders.zip --normalize models/vec_normalize_recurrent_ppo_pretrain_cylinders.pkl --stage pretrain --obstacle-type cylinders --no-safety-shield --episodes 20
+# main model + LSTM + dynamic_mix
+python visualization/visualize.py --algo recurrent_ppo --model models/recurrent_ppo_pretrain_dynamic_mix.zip --normalize models/vec_normalize_recurrent_ppo_pretrain_dynamic_mix.pkl --stage pretrain --obstacle-type dynamic_mix --no-safety-shield --episodes 20
+
+# best model + LSTM + cylinders
+python visualization/visualize.py --algo recurrent_ppo --model models/best_checkpoints/RecurrentPPO_pretrain_dynamic_mix/best_model.zip --normalize models/best_checkpoints/RecurrentPPO_pretrain_dynamic_mix/best_model_vecnormalize.pkl --stage pretrain --obstacle-type cylinders --no-safety-shield --episodes 20
+# best model + LSTM + dynamic_mix
+python visualization/visualize.py --algo recurrent_ppo --model models/best_checkpoints/RecurrentPPO_pretrain_dynamic_mix/best_model.zip --normalize models/best_checkpoints/RecurrentPPO_pretrain_dynamic_mix/best_model_vecnormalize.pkl --stage pretrain --obstacle-type dynamic_mix --no-safety-shield --episodes 20
+
+
+
+preview:
+python visualization/preview_scenarios.py --stage pretrain --obstacle-type dynamic_mix --duration 3 --continuous
+
+
+
+--model models/best_checkpoints/RecurrentPPO_pretrain_swinging_sticks_enhanced_obs/best_model.zip
+--normalize models/best_checkpoints/RecurrentPPO_pretrain_swinging_sticks_enhanced_obs/best_model_vecnormalize.pkl

@@ -48,6 +48,21 @@ python training/train.py --stage 1 --n-envs 8
 
 # Продолжить прерванное обучение
 python training/train.py --stage 1 --continue
+
+# Режим непрерывного наблюдения (одна карта + траектория в GUI)
+python training/train.py --stage 0 --watch
+
+# Режим наблюдения с ограничением скорости
+python training/train.py --stage 1 --watch --watch-fps 20
+
+# Обучение на фиксированной карте без GUI
+python training/train.py --stage 1 --fixed-map
+
+# 8 дронов одновременно на одной карте (pretrain, с просмотром)
+python training/train.py --stage pretrain --obstacle-type cylinders --watch --swarm-drones 8
+
+# Быстрее в GUI (без отрисовки траекторий)
+python training/train.py --stage pretrain --obstacle-type cylinders --watch --swarm-drones 8 --watch-fps 90 --no-show-paths
 ```
 
 ## 👁️ Визуализация

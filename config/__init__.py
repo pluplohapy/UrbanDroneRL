@@ -8,6 +8,9 @@ Usage:
     print(config.ARENA_SIZE_X)
 """
 
+from types import SimpleNamespace
+
+
 def load_config(stage='0'):
     """
     Load configuration for specified stage.
@@ -34,6 +37,22 @@ def load_config(stage='0'):
             setattr(cfg, key, getattr(debug, key))
 
     return cfg
+
+
+def apply_pretrain_obstacle_overrides(cfg, obstacle_type):
+    """Return a config view with explicit pretrain-map overrides applied."""
+    params = getattr(cfg, "OBSTACLE_TYPES", {}).get(obstacle_type, {})
+    overrides = dict(params.get("config_overrides", {}))
+    if not overrides:
+        return cfg
+
+    values = {
+        name: getattr(cfg, name)
+        for name in dir(cfg)
+        if not name.startswith("_")
+    }
+    values.update(overrides)
+    return SimpleNamespace(**values)
 
 
 # For backward compatibility - default import (stage 0)

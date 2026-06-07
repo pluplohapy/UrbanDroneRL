@@ -22,6 +22,9 @@ class NavAviaryWithPlanner(NavAviary):
         self,
         scenario,
         gui: bool = False,
+        watch_fps: float = None,
+        fixed_map: bool = False,
+        show_trajectory: bool = False,
         use_planner: bool = True,
         replan_freq: int = 0,
         waypoint_threshold: float = None,
@@ -33,6 +36,9 @@ class NavAviaryWithPlanner(NavAviary):
         Args:
             scenario: Scenario object providing obstacles and start/goal
             gui: Whether to show PyBullet GUI
+            watch_fps: Optional target FPS when GUI is enabled (for watch mode)
+            fixed_map: Keep same start/goal/obstacles across episodes
+            show_trajectory: Draw drone trajectory in GUI
             use_planner: Whether to use RRT* planner
             replan_freq: Replan every N steps (0 = no replanning)
             waypoint_threshold: Distance to consider waypoint reached (default: config.WAYPOINT_THRESHOLD)
@@ -64,7 +70,13 @@ class NavAviaryWithPlanner(NavAviary):
         self.planning_failed = False
 
         # Call parent constructor
-        super().__init__(scenario, gui)
+        super().__init__(
+            scenario=scenario,
+            gui=gui,
+            watch_fps=watch_fps,
+            fixed_map=fixed_map,
+            show_trajectory=show_trajectory
+        )
 
     def reset(self, seed=None, options=None):
         """
@@ -324,6 +336,15 @@ class NavAviaryWithPlanner(NavAviary):
         else:
             self._log_reward_component('obstacle', 0.0)
 
+        # Boundary penalty - discourages flying too close to arena borders
+        boundary_dist = self._boundary_clearance(drone_pos)
+        if boundary_dist < config.REWARD_BOUNDARY_THRESHOLD:
+            boundary_penalty = config.REWARD_BOUNDARY_SCALE * np.exp(-max(boundary_dist, 0.0))
+            reward_boundary = self._log_reward_component('boundary', -boundary_penalty)
+            reward += reward_boundary
+        else:
+            self._log_reward_component('boundary', 0.0)
+
         # Step penalty
         reward_step = self._log_reward_component('step_penalty', -config.REWARD_STEP_PENALTY)
         reward += reward_step
@@ -374,6 +395,9 @@ class NavAviaryWithPlanner(NavAviary):
         Returns:
             observation, reward, terminated, truncated, info
         """
+        action = np.clip(np.asarray(action, dtype=np.float32), -1.0, 1.0)
+        action = self._apply_safety_shield_single(action, drone_id=0)
+
         # Store action
         self.prev_prev_action = self.prev_action.copy()
         self.prev_action = action.copy()
@@ -391,6 +415,8 @@ class NavAviaryWithPlanner(NavAviary):
         obs, reward, terminated, truncated, info = super(NavAviary, self).step(
             np.array([action])
         )
+
+        self._draw_trajectory_segment()
 
         # Check waypoint reached AFTER getting reward
         drone_pos = self._getDroneStateVector(0)[:3]
@@ -453,6 +479,10 @@ class NavAviaryWithPlanner(NavAviary):
                 reward += reward_terminal
             elif info["is_crash"]:
                 reward_terminal = config.REWARD_CRASH
+                if info.get("out_of_bounds", False):
+                    reward_terminal += config.REWARD_OUT_OF_BOUNDS_EXTRA
+                if info.get("has_contact", False) and not info.get("out_of_bounds", False):
+                    reward_terminal += config.REWARD_COLLISION_EXTRA
                 reward += reward_terminal
 
         # Add timeout penalty if episode ends without success
@@ -478,6 +508,8 @@ class NavAviaryWithPlanner(NavAviary):
             # Path following score: % of time when CTE < threshold
             within_threshold = np.sum(np.array(self.cross_track_errors) < config.CROSS_TRACK_ERROR_THRESHOLD)
             info['path_following_score'] = within_threshold / len(self.cross_track_errors)
+
+        self._apply_watch_timing()
 
         return obs, reward, terminated, truncated, info
 
