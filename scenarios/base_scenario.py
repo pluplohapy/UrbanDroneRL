@@ -3,7 +3,6 @@ from abc import ABC, abstractmethod
 from typing import Tuple, List
 import config
 
-
 class BaseScenario(ABC):
 
     def __init__(self, seed: int = None):

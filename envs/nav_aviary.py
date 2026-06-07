@@ -9,7 +9,6 @@ from envs.raycasts import RaycastSensor
 from envs.visualization_utils import draw_goal_marker
 import config
 
-
 class NavAviary(BaseRLAviary):
 
     def __init__(self, scenario, gui: bool = False, watch_fps: float = None,
@@ -25,7 +24,6 @@ class NavAviary(BaseRLAviary):
         self.start_pos_all = None
         self.goal_pos_all = None
         self.prev_dist_to_goal = None
-
 
         self.arena_size_x = getattr(scenario_config, "ARENA_SIZE_X", config.ARENA_SIZE_X)
         self.arena_size_y = getattr(scenario_config, "ARENA_SIZE_Y", config.ARENA_SIZE_Y)
@@ -78,7 +76,6 @@ class NavAviary(BaseRLAviary):
         if gui and watch_fps is not None and watch_fps > 0:
             self._watch_step_duration = 1.0 / watch_fps
 
-
         self.episode_trajectory = []
         self.episode_actions = []
         self.episode_heading_errors = []
@@ -88,15 +85,12 @@ class NavAviary(BaseRLAviary):
         self.episode_min_goal_dist = float('inf')
         self.reward_components = {}
 
-
         self.episode_clearances = []
         self.episode_goal_seeking_steps = 0
         self.episode_total_steps = 0
         self.episode_yaw_rates = []
 
-
         self.raycast_sensor = RaycastSensor(ray_length=float(getattr(scenario_config, "RAY_LENGTH", config.RAY_LENGTH)))
-
 
         super().__init__(
             drone_model=DroneModel.CF2X,
@@ -144,7 +138,6 @@ class NavAviary(BaseRLAviary):
         indices = np.arange(self.num_drones)
         row = indices // side
         col = indices % side
-
 
         spacing_x = min(0.5, max(0.2, (self.arena_size_x - 1.0) / max(1, side - 1)))
         spacing_y = min(0.5, max(0.2, (self.arena_size_y - 1.0) / max(1, side - 1)))
@@ -262,8 +255,6 @@ class NavAviary(BaseRLAviary):
                 physicsClientId=self.CLIENT
             )
             self._arena_wall_body_ids.append(body_id)
-
-
 
         add_box(
             [thickness / 2.0, half_y + thickness, wall_height / 2.0],
@@ -512,7 +503,6 @@ class NavAviary(BaseRLAviary):
         avoid_body = -np.sum(top_dirs * weights[:, None], axis=0)
         avoid_body[2] *= float(getattr(cfg, "SAFETY_SHIELD_VERTICAL_GAIN", config.SAFETY_SHIELD_VERTICAL_GAIN))
 
-
         x, y, z = float(drone_pos[0]), float(drone_pos[1]), float(drone_pos[2])
         half_x = self.arena_size_x / 2
         half_y = self.arena_size_y / 2
@@ -539,7 +529,6 @@ class NavAviary(BaseRLAviary):
         avoid_norm = np.linalg.norm(avoid_body)
         avoid_dir = avoid_body / avoid_norm if avoid_norm > 1e-6 else np.zeros(3, dtype=np.float32)
 
-
         risk = np.clip((soft - min_dist) / max(soft - hard, 1e-6), 0.0, 1.0)
         safe_action = action.copy()
 
@@ -547,7 +536,6 @@ class NavAviary(BaseRLAviary):
         avoid_gain = float(getattr(cfg, "SAFETY_SHIELD_AVOID_GAIN", config.SAFETY_SHIELD_AVOID_GAIN))
         brake_scale = np.clip(1.0 - risk * brake_gain, 0.1, 1.0)
         safe_vel = safe_action[:3] * brake_scale + avoid_dir * avoid_gain * risk
-
 
         if min_dist < hard:
             closest_idx = int(np.argmin(ray_dist))
@@ -656,7 +644,6 @@ class NavAviary(BaseRLAviary):
                     self.scenario.obstacles.append(obstacle)
                     break
             return
-
 
         self.scenario.obstacles = []
 
@@ -967,7 +954,6 @@ class NavAviary(BaseRLAviary):
         if not (self.show_trajectory and self.GUI):
             return
 
-
         if self.control_step_counter % self._trajectory_draw_every != 0:
             return
 
@@ -1027,7 +1013,6 @@ class NavAviary(BaseRLAviary):
             state = self._getDroneStateVector(k)
             cur_quat = state[3:7]
 
-
             target_vel_body = np.array([
                 action[k, 0] * vx_max,
                 action[k, 1] * vy_max,
@@ -1038,11 +1023,8 @@ class NavAviary(BaseRLAviary):
                 if command_speed > max_command_speed:
                     target_vel_body *= max_command_speed / command_speed
 
-
             rot_matrix = np.array(p.getMatrixFromQuaternion(cur_quat)).reshape(3, 3)
             target_vel_world = rot_matrix @ target_vel_body
-
-
 
             drone_pos = state[0:3]
             if boundary_soft_margin > 1e-6:
@@ -1053,24 +1035,20 @@ class NavAviary(BaseRLAviary):
                     clearance = max(0.0, float(clearance))
                     return float(np.clip(clearance / boundary_soft_margin, boundary_min_scale, 1.0))
 
-
                 if target_vel_world[0] > 0.0:
                     target_vel_world[0] *= _scale_from_clearance(half_x - float(drone_pos[0]))
                 elif target_vel_world[0] < 0.0:
                     target_vel_world[0] *= _scale_from_clearance(float(drone_pos[0]) + half_x)
-
 
                 if target_vel_world[1] > 0.0:
                     target_vel_world[1] *= _scale_from_clearance(half_y - float(drone_pos[1]))
                 elif target_vel_world[1] < 0.0:
                     target_vel_world[1] *= _scale_from_clearance(float(drone_pos[1]) + half_y)
 
-
                 if target_vel_world[2] > 0.0:
                     target_vel_world[2] *= _scale_from_clearance(self.arena_height - float(drone_pos[2]))
                 elif target_vel_world[2] < 0.0:
                     target_vel_world[2] *= _scale_from_clearance(float(drone_pos[2]) - 0.1)
-
 
             goal = self.goal_pos_all[k] if self.swarm_mode else self.goal_pos
             if goal is not None:
@@ -1094,15 +1072,10 @@ class NavAviary(BaseRLAviary):
                         away_component = goal_velocity * goal_direction
                         target_vel_world -= away_component * (1.0 - away_scale)
 
-
             target_yaw_rate = action[k, 3] * yaw_rate_max
             target_yaw = state[9] + target_yaw_rate * self.CTRL_TIMESTEP
 
-
-
-
             target_pos = state[0:3] + target_vel_world * self.CTRL_TIMESTEP * max(1.0, velocity_lookahead_steps)
-
 
             rpm_k, _, _ = self.ctrl[k].computeControl(
                 control_timestep=self.CTRL_TIMESTEP,
@@ -1282,7 +1255,6 @@ class NavAviary(BaseRLAviary):
                 )
             return obs_all.astype(np.float32)
 
-
         drone_pos = self._getDroneStateVector(0)[:3]
         drone_quat = self._getDroneStateVector(0)[3:7]
         drone_vel = self._getDroneStateVector(0)[10:13]
@@ -1449,10 +1421,8 @@ class NavAviary(BaseRLAviary):
         curr_dist = np.linalg.norm(self.goal_pos - drone_pos)
         speed = np.linalg.norm(drone_vel)
 
-
         if debug_mode and log_reward_components:
             self.reward_components = {}
-
 
         progress = self.prev_dist_to_goal - curr_dist
         reward_progress = self._log_reward_component('progress', progress_scale * progress)
@@ -1474,7 +1444,6 @@ class NavAviary(BaseRLAviary):
         else:
             self._log_reward_component('near_goal_stall', 0.0)
             self._log_reward_component('near_goal_progress', 0.0)
-
 
         goal_world = self.goal_pos - drone_pos
         goal_direction = goal_world / (np.linalg.norm(goal_world) + 1e-6)
@@ -1512,11 +1481,9 @@ class NavAviary(BaseRLAviary):
         )
         reward += reward_near_goal_capture
 
-
         yaw_action = abs(self.prev_action[3]) if len(self.prev_action) > 3 else 0
         reward_yaw_penalty = self._log_reward_component('yaw_penalty', -yaw_penalty_scale * (yaw_action ** 2))
         reward += reward_yaw_penalty
-
 
         if speed > 0.1:
             vel_direction = drone_vel / speed
@@ -1529,7 +1496,6 @@ class NavAviary(BaseRLAviary):
         else:
             self._log_reward_component('heading', 0.0)
 
-
         if hasattr(self, 'prev_prev_action') and len(self.prev_prev_action) > 0:
             action_change = np.linalg.norm(self.prev_action - self.prev_prev_action)
             reward_smoothness = self._log_reward_component('smoothness', -smoothness_scale * action_change)
@@ -1537,17 +1503,14 @@ class NavAviary(BaseRLAviary):
         else:
             self._log_reward_component('smoothness', 0.0)
 
-
         reward_proximity = self._log_reward_component(
             'proximity',
             proximity_scale * np.exp(-curr_dist) * approach_factor
         )
         reward += reward_proximity
 
-
         self.prev_dist_to_goal = curr_dist
         self.episode_min_goal_dist = min(self.episode_min_goal_dist, curr_dist)
-
 
         grid_x = int((drone_pos[0] + self.arena_size_x / 2) / exploration_grid_size)
         grid_y = int((drone_pos[1] + self.arena_size_y / 2) / exploration_grid_size)
@@ -1561,7 +1524,6 @@ class NavAviary(BaseRLAviary):
         else:
             self._log_reward_component('exploration', 0.0)
 
-
         raycasts = self.raycast_sensor.cast_rays(
             drone_pos,
             drone_quat,
@@ -1570,15 +1532,12 @@ class NavAviary(BaseRLAviary):
         )
         min_ray = np.min(raycasts)
 
-
         min_dist = min_ray * ray_length
-
 
         if debug_mode and log_episode_metrics:
             self.episode_min_obstacle_dist = min(self.episode_min_obstacle_dist, min_dist)
             if min_dist < min_clearance:
                 self.episode_near_misses += 1
-
 
         if proximity_threshold > 0.0 and min_dist < proximity_threshold:
             penalty = proximity_scale * np.exp(-min_dist)
@@ -1607,7 +1566,6 @@ class NavAviary(BaseRLAviary):
         )
         reward += reward_obstacle_hard
 
-
         boundary_dist = self._boundary_clearance(drone_pos)
         if boundary_threshold > 0.0 and boundary_dist < boundary_threshold:
             boundary_penalty = boundary_scale * np.exp(-max(boundary_dist, 0.0))
@@ -1629,12 +1587,10 @@ class NavAviary(BaseRLAviary):
         )
         reward += reward_near_goal_boundary
 
-
         reward_step = self._log_reward_component('step_penalty', -step_penalty)
         reward += reward_step
         if debug_mode and log_reward_components:
             self.reward_components['step_penalty'] = reward_step
-
 
         if debug_mode and log_navigation_metrics:
 
@@ -1645,15 +1601,12 @@ class NavAviary(BaseRLAviary):
                 self.episode_heading_errors.append(np.degrees(heading_error))
                 self.episode_speeds.append(speed)
 
-
         if debug_mode and log_episode_metrics:
             self.episode_min_goal_dist = min(self.episode_min_goal_dist, curr_dist)
-
 
         if debug_mode and log_extended_metrics:
 
             self.episode_clearances.append(min_dist)
-
 
             speed = np.linalg.norm(drone_vel)
             if speed > 0.1:
@@ -1661,7 +1614,6 @@ class NavAviary(BaseRLAviary):
                 alignment = np.dot(vel_direction, goal_direction)
                 if alignment > 0:
                     self.episode_goal_seeking_steps += 1
-
 
             yaw_rate = abs(self.prev_action[3]) * yaw_rate_max if len(self.prev_action) > 3 else 0
             self.episode_yaw_rates.append(yaw_rate)
@@ -1676,16 +1628,13 @@ class NavAviary(BaseRLAviary):
 
         drone_pos = self._getDroneStateVector(0)[:3]
 
-
         dist_to_goal = np.linalg.norm(self.goal_pos - drone_pos)
         if self._check_goal_success(dist_to_goal, drone_id=0, update_counter=True):
             return True
 
-
         contact_points = p.getContactPoints(bodyA=self.DRONE_IDS[0], physicsClientId=self.CLIENT) or []
         if len(contact_points) > 0:
             return True
-
 
         if self._is_out_of_bounds(drone_pos):
             return True
@@ -1748,15 +1697,12 @@ class NavAviary(BaseRLAviary):
         drone_quat = self._getDroneStateVector(0)[3:7]
         dist_to_goal = np.linalg.norm(self.goal_pos - drone_pos)
 
-
         is_success = self._check_goal_success(dist_to_goal, drone_id=0, update_counter=False)
         contact_points = p.getContactPoints(bodyA=self.DRONE_IDS[0], physicsClientId=self.CLIENT) or []
-
 
         out_of_bounds = self._is_out_of_bounds(drone_pos)
 
         is_crash = len(contact_points) > 0 or out_of_bounds
-
 
         raycasts = self.raycast_sensor.cast_rays(
             drone_pos,
@@ -1786,7 +1732,6 @@ class NavAviary(BaseRLAviary):
             "obstacle_count": len(getattr(self.scenario, "obstacles", []))
         }
 
-
         if debug_mode:
             if log_reward_components and hasattr(self, 'reward_components'):
                 info['reward_components'] = self.reward_components.copy()
@@ -1807,7 +1752,6 @@ class NavAviary(BaseRLAviary):
                     )
                 info['path_efficiency'] = straight_dist / (path_length + 1e-6)
 
-
                 if len(self.episode_heading_errors) > 0:
                     info['avg_heading_error'] = np.mean(self.episode_heading_errors)
                 if len(self.episode_speeds) > 0:
@@ -1817,7 +1761,6 @@ class NavAviary(BaseRLAviary):
                 actions_array = np.array(self.episode_actions)
                 info['action_mean'] = np.mean(actions_array, axis=0)
                 info['action_std'] = np.std(actions_array, axis=0)
-
 
                 if len(self.episode_actions) > 1:
                     smoothness = np.mean([
@@ -1831,7 +1774,6 @@ class NavAviary(BaseRLAviary):
                 if len(self.episode_clearances) > 0:
                     info['avg_clearance'] = np.mean(self.episode_clearances)
 
-
                 if len(self.episode_speeds) > 0:
                     hovering_threshold = float(
                         getattr(cfg, "HOVERING_SPEED_THRESHOLD", getattr(config, "HOVERING_SPEED_THRESHOLD", 0.1))
@@ -1839,10 +1781,8 @@ class NavAviary(BaseRLAviary):
                     hovering_steps = np.sum(np.array(self.episode_speeds) < hovering_threshold)
                     info['hovering_time'] = hovering_steps / len(self.episode_speeds)
 
-
                 if self.episode_total_steps > 0:
                     info['goal_seeking_ratio'] = self.episode_goal_seeking_steps / self.episode_total_steps
-
 
                 if len(self.episode_yaw_rates) > 0:
                     spinning_threshold = float(
@@ -1880,12 +1820,10 @@ class NavAviary(BaseRLAviary):
             self.INIT_XYZS = np.array([self.start_pos])
             self.INIT_RPYS = np.array([[0, 0, 0]])
 
-
         obs, info = super().reset(seed=seed, options=options)
         self._optimize_gui_rendering()
         self._refresh_drone_body_ids()
         self._create_physical_arena_walls()
-
 
         if self.fixed_map and self._fixed_map_initialized:
             self._restore_obstacles_from_specs()
@@ -1898,7 +1836,6 @@ class NavAviary(BaseRLAviary):
                 self._fixed_map_initialized = True
 
         self._disable_inter_drone_collisions()
-
 
         self.control_step_counter = 0
         self._shield_steps = 0
@@ -1922,7 +1859,6 @@ class NavAviary(BaseRLAviary):
             self.visited_cells = set()
         self._prev_raycasts = None
 
-
         if debug_mode and not self.swarm_mode:
             self.episode_trajectory = [self.start_pos.copy()]
             self.episode_actions = []
@@ -1932,7 +1868,6 @@ class NavAviary(BaseRLAviary):
             self.episode_near_misses = 0
             self.episode_min_goal_dist = self.prev_dist_to_goal
             self.reward_components = {}
-
 
             if log_extended_metrics:
                 self.episode_clearances = []
@@ -1951,7 +1886,6 @@ class NavAviary(BaseRLAviary):
             self._draw_watch_markers()
         else:
             self._trajectory_prev_pos = None
-
 
         obs = self._computeObs()
 
@@ -2028,19 +1962,14 @@ class NavAviary(BaseRLAviary):
         action = np.clip(np.asarray(action, dtype=np.float32), -1.0, 1.0)
         action = self._apply_safety_shield_single(action, drone_id=0)
 
-
         self.prev_prev_action = self.prev_action.copy()
         self.prev_action = action.copy()
-
 
         if debug_mode and log_action_stats:
             self.episode_actions.append(action.copy())
 
-
         dt = 1.0 / self.CTRL_FREQ
         self.scenario.update_dynamic_obstacles(dt)
-
-
 
         obs, reward, terminated, truncated, info = super().step(
             np.array([action])
@@ -2048,26 +1977,21 @@ class NavAviary(BaseRLAviary):
 
         self._draw_trajectory_segment()
 
-
         if debug_mode and log_navigation_metrics:
             drone_pos = self._getDroneStateVector(0)[:3]
             self.episode_trajectory.append(drone_pos.copy())
 
-
         self.control_step_counter += 1
-
 
         reward_terminal = 0.0
         if terminated:
             if info["is_success"]:
                 reward_terminal = reward_success
 
-
                 if efficiency_bonus_enabled:
                     efficiency = 1.0 - (self.control_step_counter / max(max_steps, 1))
                     efficiency_bonus = efficiency_scale * efficiency
                     reward_terminal += efficiency_bonus
-
 
                     if debug_mode and log_reward_components:
                         if 'reward_components' not in info:
@@ -2083,7 +2007,6 @@ class NavAviary(BaseRLAviary):
                     reward_terminal += reward_collision_extra
                 reward += reward_terminal
 
-
         if truncated and not terminated:
             reward_terminal = timeout_penalty
             if not self.swarm_mode:
@@ -2094,7 +2017,6 @@ class NavAviary(BaseRLAviary):
                     self.episode_min_goal_dist,
                 )
             reward += reward_terminal
-
 
         if debug_mode and log_reward_components:
             if 'reward_components' not in info:

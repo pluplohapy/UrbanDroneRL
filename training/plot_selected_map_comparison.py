@@ -16,7 +16,6 @@ from matplotlib.ticker import FuncFormatter, MaxNLocator
 import numpy as np
 import pandas as pd
 
-
 @dataclass(frozen=True)
 class MapSpec:
     key: str
@@ -24,7 +23,6 @@ class MapSpec:
     color: str
     include: tuple[str, ...]
     exclude: tuple[str, ...] = ()
-
 
 MAP_SPECS: tuple[MapSpec, ...] = (
     MapSpec(
@@ -54,7 +52,6 @@ MAP_SPECS: tuple[MapSpec, ...] = (
         exclude=("construction_site", "consite"),
     ),
 )
-
 
 METRICS: tuple[dict[str, str], ...] = (
     {
@@ -101,10 +98,8 @@ METRICS: tuple[dict[str, str], ...] = (
     },
 )
 
-
 def repo_root() -> Path:
     return Path(__file__).resolve().parents[1]
-
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -136,7 +131,6 @@ def parse_args() -> argparse.Namespace:
     )
     return parser.parse_args()
 
-
 def read_jsonl(path: Path) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     if not path.exists():
@@ -152,13 +146,11 @@ def read_jsonl(path: Path) -> list[dict[str, Any]]:
                 continue
     return rows
 
-
 def extract_timestamp(run_name: str) -> str:
     parts = run_name.rsplit("_", 2)
     if len(parts) >= 2 and parts[-2].isdigit() and parts[-1].isdigit():
         return f"{parts[-2]}_{parts[-1]}"
     return run_name
-
 
 def match_runs(diagnostics_dir: Path, spec: MapSpec) -> list[Path]:
     candidates = [path for path in diagnostics_dir.iterdir() if path.is_dir()]
@@ -174,7 +166,6 @@ def match_runs(diagnostics_dir: Path, spec: MapSpec) -> list[Path]:
         matched.append(path)
     return sorted(matched, key=lambda p: extract_timestamp(p.name))
 
-
 def flatten_milestone(row: dict[str, Any]) -> dict[str, Any]:
     rates = row.get("rates") or {}
     means = row.get("means") or {}
@@ -189,7 +180,6 @@ def flatten_milestone(row: dict[str, Any]) -> dict[str, Any]:
         "progress_ratio": means.get("progress_ratio"),
         "window_size": row.get("window_size"),
     }
-
 
 def build_map_frame(
     diagnostics_dir: Path,
@@ -229,7 +219,6 @@ def build_map_frame(
         start_step = float(run_df["raw_timesteps"].iloc[0])
         relative_steps = run_df["raw_timesteps"] - start_step
 
-
         relative_steps = relative_steps.cummax()
         run_df["map"] = spec.key
         run_df["label"] = spec.label
@@ -251,7 +240,6 @@ def build_map_frame(
 
     return pd.DataFrame(rows), summary
 
-
 def setup_style() -> None:
     plt.rcParams.update({
         "figure.dpi": 130,
@@ -271,7 +259,6 @@ def setup_style() -> None:
         "lines.linewidth": 3.6,
     })
 
-
 def million_tick(value: float, _position: int | None = None) -> str:
     if not np.isfinite(value):
         return ""
@@ -279,12 +266,10 @@ def million_tick(value: float, _position: int | None = None) -> str:
         return "0"
     return f"{value / 1_000_000:.1f}M".replace(".0M", "M")
 
-
 def smooth(values: pd.Series, window: int) -> pd.Series:
     if window <= 1 or len(values) < 3:
         return values
     return values.rolling(window=min(window, len(values)), min_periods=1).mean()
-
 
 def plot_metric(
     ax: plt.Axes,
@@ -345,7 +330,6 @@ def plot_metric(
         )
     return handles, labels
 
-
 def save_individual_plots(df: pd.DataFrame, out_dir: Path, smooth_window: int) -> None:
     for metric in METRICS:
         fig, ax = plt.subplots(figsize=(15.5, 9.2))
@@ -353,7 +337,6 @@ def save_individual_plots(df: pd.DataFrame, out_dir: Path, smooth_window: int) -
         fig.subplots_adjust(left=0.12, right=0.98, top=0.90, bottom=0.28)
         fig.savefig(out_dir / metric["filename"], bbox_inches="tight", pad_inches=0.35)
         plt.close(fig)
-
 
 def save_combined_sheet(df: pd.DataFrame, out_dir: Path, smooth_window: int) -> None:
     fig, axes = plt.subplots(2, 3, figsize=(26, 15.5))
@@ -387,7 +370,6 @@ def save_combined_sheet(df: pd.DataFrame, out_dir: Path, smooth_window: int) -> 
     fig.subplots_adjust(left=0.085, right=0.985, top=0.91, bottom=0.14, wspace=0.28, hspace=0.40)
     fig.savefig(out_dir / "00_all_six_metrics.png", bbox_inches="tight", pad_inches=0.35)
     plt.close(fig)
-
 
 def main() -> None:
     args = parse_args()
@@ -423,7 +405,6 @@ def main() -> None:
 
     print(f"Saved plots to: {args.out_dir}")
     print(f"Rows: {len(df)}")
-
 
 if __name__ == "__main__":
     main()

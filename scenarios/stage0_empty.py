@@ -3,7 +3,6 @@ from typing import Tuple
 from scenarios.base_scenario import BaseScenario
 from config import load_config
 
-
 class Stage0Scenario(BaseScenario):
 
     def __init__(self, seed: int = None):

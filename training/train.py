@@ -21,10 +21,8 @@ try:
 except ImportError:
     RecurrentPPO = None
 
-
 warnings.filterwarnings('ignore')
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
-
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -34,7 +32,6 @@ from scenarios.stage0_empty import Stage0Scenario
 from scenarios.stage1_static import Stage1Scenario
 from config import load_config, apply_pretrain_obstacle_overrides
 from config.runtime_sync import sync_runtime_config
-
 
 ALGO_CHOICES = ("ppo", "recurrent_ppo")
 PRETRAIN_OBSTACLE_CHOICES = (
@@ -55,7 +52,6 @@ PRETRAIN_OBSTACLE_CHOICES = (
     "swinging_sticks",
 )
 
-
 def get_algorithm_class(algo: str):
     if algo == "ppo":
         return PPO
@@ -67,20 +63,16 @@ def get_algorithm_class(algo: str):
         return RecurrentPPO
     raise ValueError(f"Unknown algorithm: {algo}")
 
-
 def algorithm_display_name(algo: str) -> str:
     return "RecurrentPPO" if algo == "recurrent_ppo" else "PPO"
 
-
 def is_recurrent_algorithm(algo: str) -> bool:
     return algo == "recurrent_ppo"
-
 
 def sync_env_runtime_config(scenario):
     scenario_config = getattr(scenario, "config", None)
     if scenario_config is not None:
         sync_runtime_config(scenario_config)
-
 
 def build_algorithm_params(ppo_params: dict, algo: str) -> dict:
     params = dict(ppo_params)
@@ -88,7 +80,6 @@ def build_algorithm_params(ppo_params: dict, algo: str) -> dict:
         return params
 
     params["policy"] = "MlpLstmPolicy"
-
 
     params["use_sde"] = False
     params.pop("sde_sample_freq", None)
@@ -98,7 +89,6 @@ def build_algorithm_params(ppo_params: dict, algo: str) -> dict:
     policy_kwargs.setdefault("n_lstm_layers", 1)
     params["policy_kwargs"] = policy_kwargs
     return params
-
 
 def predict_with_optional_state(model, obs, deterministic: bool, lstm_states=None, episode_starts=None):
     if RecurrentPPO is not None and isinstance(model, RecurrentPPO):
@@ -113,7 +103,6 @@ def predict_with_optional_state(model, obs, deterministic: bool, lstm_states=Non
 
     action, _ = model.predict(obs, deterministic=deterministic)
     return action, None
-
 
 class TrainingDiagnosticsLogger:
 
@@ -310,7 +299,6 @@ class TrainingDiagnosticsLogger:
                 return "low_clearance_crash"
             return "crash_unknown"
 
-
         min_goal = record.get("min_goal_distance")
         progress_ratio = record.get("progress_ratio")
         avg_speed = record.get("avg_speed")
@@ -487,7 +475,6 @@ class TrainingDiagnosticsLogger:
             for k, v in record["reward_components"].items():
                 self._update_metric_map(self.reward_component_bad_sums, self.reward_component_bad_counts, k, v)
 
-
         self.total_episodes += 1
         self.outcome_counts[outcome] += 1
         for metric_key in [
@@ -516,11 +503,9 @@ class TrainingDiagnosticsLogger:
                 record.get(metric_key)
             )
 
-
         should_write = is_bad or (record["episode"] % self.sample_every == 0)
         if should_write:
             self._episodes_fh.write(json.dumps(record, ensure_ascii=False) + "\n")
-
 
         if is_bad:
             severity = self._failure_severity(record)
@@ -535,7 +520,6 @@ class TrainingDiagnosticsLogger:
 
         self.window.append(record)
         self._record_milestone(record["episode"], record["timesteps"])
-
 
         if self.total_episodes % 20 == 0:
             self._episodes_fh.flush()
@@ -584,7 +568,6 @@ class TrainingDiagnosticsLogger:
 
             self._milestones_fh.flush()
             self._milestones_fh.close()
-
 
         ranked_bad = sorted(self.bad_heap, key=lambda x: (x[0], x[1]), reverse=True)
         with open(self.bad_path, "w", encoding="utf-8") as fh:
@@ -641,7 +624,6 @@ class TrainingDiagnosticsLogger:
         with open(self.summary_path, "w", encoding="utf-8") as fh:
             json.dump(summary, fh, ensure_ascii=False, indent=2)
 
-
 class ProgressCallback(BaseCallback):
 
     def __init__(self, stage, use_planner, config, diag_logger=None, verbose=0):
@@ -661,11 +643,9 @@ class ProgressCallback(BaseCallback):
         self.swarm_successes = []
         self.swarm_crashes = []
 
-
         if use_planner:
             self.planning_failures = []
             self.n_waypoints = []
-
 
         if config.DEBUG_MODE:
             self.reward_components = {k: [] for k in [
@@ -680,7 +660,6 @@ class ProgressCallback(BaseCallback):
             self.action_stats = {'action_mean': [], 'action_std': [], 'action_smoothness': []}
             self.timeout_metrics = {'final_dist': [], 'min_dist': [], 'start_dist': []}
 
-
             if self.config.LOG_EXTENDED_EPISODE_METRICS:
                 self.extended_metrics = {
                     'avg_clearance': [],
@@ -688,7 +667,6 @@ class ProgressCallback(BaseCallback):
                     'goal_seeking_ratio': [],
                     'spinning_time': []
                 }
-
 
             if use_planner and self.config.LOG_PATH_FOLLOWING_METRICS:
                 self.path_following_metrics = {
@@ -714,7 +692,6 @@ class ProgressCallback(BaseCallback):
                             info=info
                         )
 
-
                     if "is_success" in info:
                         if info.get("swarm_mode", False):
                             self.swarm_mode_detected = True
@@ -730,13 +707,11 @@ class ProgressCallback(BaseCallback):
                         self.episode_crashes.append(1 if is_crash else 0)
                         self.episode_timeouts.append(1 if is_timeout else 0)
 
-
                         if self.use_planner:
                             if "planning_failed" in info:
                                 self.planning_failures.append(1 if info["planning_failed"] else 0)
                             if "n_waypoints" in info:
                                 self.n_waypoints.append(info["n_waypoints"])
-
 
                         if self.config.DEBUG_MODE:
 
@@ -745,7 +720,6 @@ class ProgressCallback(BaseCallback):
                                     if k in self.reward_components:
                                         self.reward_components[k].append(v)
 
-
                             if self.config.LOG_NAVIGATION_METRICS:
                                 if 'path_efficiency' in info:
                                     self.navigation_metrics['path_efficiency'].append(info['path_efficiency'])
@@ -753,7 +727,6 @@ class ProgressCallback(BaseCallback):
                                     self.navigation_metrics['avg_heading_error'].append(info['avg_heading_error'])
                                 if 'avg_speed' in info:
                                     self.navigation_metrics['avg_speed'].append(info['avg_speed'])
-
 
                             if self.config.LOG_EPISODE_METRICS:
                                 if 'start_distance' in info:
@@ -765,19 +738,16 @@ class ProgressCallback(BaseCallback):
                                 if 'n_near_misses' in info:
                                     self.episode_metrics['n_near_misses'].append(info['n_near_misses'])
 
-
                             if self.config.LOG_ACTION_STATS:
                                 if 'action_mean' in info:
                                     self.action_stats['action_mean'].append(info['action_mean'])
                                 if 'action_smoothness' in info:
                                     self.action_stats['action_smoothness'].append(info['action_smoothness'])
 
-
                             if self.config.LOG_TIMEOUT_ANALYSIS and is_timeout:
                                 self.timeout_metrics['final_dist'].append(info.get('dist_to_goal', 0))
                                 self.timeout_metrics['min_dist'].append(info.get('min_goal_distance', 0))
                                 self.timeout_metrics['start_dist'].append(info.get('start_distance', 0))
-
 
                             if self.config.LOG_EXTENDED_EPISODE_METRICS:
                                 if 'avg_clearance' in info:
@@ -788,7 +758,6 @@ class ProgressCallback(BaseCallback):
                                     self.extended_metrics['goal_seeking_ratio'].append(info['goal_seeking_ratio'])
                                 if 'spinning_time' in info:
                                     self.extended_metrics['spinning_time'].append(info['spinning_time'])
-
 
                             if self.use_planner and self.config.LOG_PATH_FOLLOWING_METRICS:
                                 if 'avg_cross_track_error' in info:
@@ -820,7 +789,6 @@ class ProgressCallback(BaseCallback):
         timeout_rate = np.mean(recent_timeouts) if recent_timeouts else 0.0
         avg_length = np.mean(recent_lengths)
 
-
         print(f"Episode {self.episode_count:4d} | Steps: {self.num_timesteps:7d}")
         print(f"  Outcomes : S={success_rate:4.0%} | C={crash_rate:4.0%} | T={timeout_rate:4.0%}")
 
@@ -830,7 +798,6 @@ class ProgressCallback(BaseCallback):
             avg_swarm_success = np.mean(self.swarm_successes[-recent_n:]) if len(self.swarm_successes) > 0 else 0
             avg_swarm_crash = np.mean(self.swarm_crashes[-recent_n:]) if len(self.swarm_crashes) > 0 else 0
             print(f"  Swarm    : respawns={avg_respawns:.1f} | successes={avg_swarm_success:.1f} | crashes={avg_swarm_crash:.1f}")
-
 
         if self.use_planner and len(self.planning_failures) > 0:
             recent_failures = self.planning_failures[-min(50, len(self.planning_failures)):]
@@ -865,7 +832,6 @@ class ProgressCallback(BaseCallback):
                 term = np.mean(self.reward_components['terminal'][-recent_n:]) if len(self.reward_components['terminal']) > 0 else 0
                 print(f"  Reward   : total={avg_reward:7.1f} | prog={prog:5.1f} | vel={vel:4.1f} | prox={prox:4.1f} | obst={obst:5.1f} | bound={bound + bound_out:5.1f} | near={near:5.1f} | term={term:5.1f}")
 
-
             if self.config.LOG_NAVIGATION_METRICS and len(self.navigation_metrics['path_efficiency']) > 0:
                 recent_n = min(50, len(self.navigation_metrics['path_efficiency']))
                 eff = np.mean(self.navigation_metrics['path_efficiency'][-recent_n:])
@@ -873,17 +839,14 @@ class ProgressCallback(BaseCallback):
                 speed = np.mean(self.navigation_metrics['avg_speed'][-recent_n:]) if len(self.navigation_metrics['avg_speed']) > 0 else 0
                 print(f"  Navigate : efficiency={eff:.2f} | heading_err={heading:.1f}° | speed={speed:.2f}m/s")
 
-
             if self.config.LOG_TIMEOUT_ANALYSIS and len(self.timeout_metrics['final_dist']) > 0:
                 final = np.mean(self.timeout_metrics['final_dist'])
                 min_d = np.mean(self.timeout_metrics['min_dist'])
-
 
                 near_goal_count = sum(1 for d in self.timeout_metrics['min_dist'] if d < self.config.TIMEOUT_NEAR_GOAL_THRESHOLD)
                 near_goal_pct = near_goal_count / len(self.timeout_metrics['min_dist']) if len(self.timeout_metrics['min_dist']) > 0 else 0
 
                 print(f"  Timeouts : final_dist={final:.1f}m | min_dist={min_d:.1f}m | near_goal={near_goal_pct:.0%}")
-
 
             if self.config.LOG_EXTENDED_EPISODE_METRICS and len(self.extended_metrics['avg_clearance']) > 0:
                 recent_n = min(50, len(self.extended_metrics['avg_clearance']))
@@ -893,14 +856,12 @@ class ProgressCallback(BaseCallback):
                 spinning = np.mean(self.extended_metrics['spinning_time'][-recent_n:]) if len(self.extended_metrics['spinning_time']) > 0 else 0
                 print(f"  Behavior : clearance={clearance:.2f}m | hovering={hovering:.0%} | goal_seek={goal_seek:.0%} | spinning={spinning:.0%}")
 
-
             if self.use_planner and self.config.LOG_PATH_FOLLOWING_METRICS and len(self.path_following_metrics['avg_cross_track_error']) > 0:
                 recent_n = min(50, len(self.path_following_metrics['avg_cross_track_error']))
                 avg_cte = np.mean(self.path_following_metrics['avg_cross_track_error'][-recent_n:])
                 max_cte = np.mean(self.path_following_metrics['max_cross_track_error'][-recent_n:])
                 pf_score = np.mean(self.path_following_metrics['path_following_score'][-recent_n:])
                 print(f"  PathFollow: avg_CTE={avg_cte:.2f}m | max_CTE={max_cte:.2f}m | score={pf_score:.0%}")
-
 
             if self.config.LOG_ACTION_STATS and len(self.action_stats['action_smoothness']) > 0:
                 recent_n = min(50, len(self.action_stats['action_smoothness']))
@@ -913,7 +874,6 @@ class ProgressCallback(BaseCallback):
             print(f"  Reward: {avg_reward:7.2f} | Length: {avg_length:5.1f}")
 
         print()
-
 
 class SuccessRateEvalCallback(BaseCallback):
 
@@ -1114,7 +1074,6 @@ class SuccessRateEvalCallback(BaseCallback):
 
         return True
 
-
 def make_env_stage0(rank, seed=0, use_planner=True, config=None, gui=False, watch_fps=None,
                     fixed_map=False, show_paths=False, swarm_drones=1):
     def _init():
@@ -1153,7 +1112,6 @@ def make_env_stage0(rank, seed=0, use_planner=True, config=None, gui=False, watc
         env = Monitor(env)
         return env
     return _init
-
 
 def make_env_stage1(rank, seed=0, use_planner=True, config=None, gui=False, watch_fps=None,
                     fixed_map=False, show_paths=False, swarm_drones=1):
@@ -1194,7 +1152,6 @@ def make_env_stage1(rank, seed=0, use_planner=True, config=None, gui=False, watc
         return env
     return _init
 
-
 def make_env_pretrain(rank, seed=0, obstacle_type='random', config=None, gui=False, watch_fps=None,
                       fixed_map=False, show_paths=False, swarm_drones=1):
     def _init():
@@ -1205,7 +1162,6 @@ def make_env_pretrain(rank, seed=0, obstacle_type='random', config=None, gui=Fal
             seed=seed + rank
         )
         sync_env_runtime_config(scenario)
-
 
         env = NavAviary(
             scenario=scenario,
@@ -1219,7 +1175,6 @@ def make_env_pretrain(rank, seed=0, obstacle_type='random', config=None, gui=Fal
         env = Monitor(env)
         return env
     return _init
-
 
 def apply_loaded_model_hyperparams(model, ppo_params):
     if not isinstance(ppo_params, dict):
@@ -1256,7 +1211,6 @@ def apply_loaded_model_hyperparams(model, ppo_params):
         applied.append(f"max_grad_norm={float(ppo_params['max_grad_norm']):g}")
 
     return applied
-
 
 def main():
     parser = argparse.ArgumentParser(description='Train drone navigation')
@@ -1359,7 +1313,6 @@ def main():
     if args.promote_best_to_main and not args.eval_enabled:
         parser.error("--promote-best-to-main requires periodic eval; remove --no-eval")
 
-
     config = load_config(args.stage)
     if args.stage == "pretrain":
         config = apply_pretrain_obstacle_overrides(config, args.obstacle_type)
@@ -1369,27 +1322,21 @@ def main():
     train_seed = int(config.SEED if args.seed is None else args.seed)
     config.SEED = train_seed
 
-
     if args.safety_shield is not None:
         config.SAFETY_SHIELD_ENABLED = bool(args.safety_shield)
-
 
     if args.debug:
         config.DEBUG_MODE = True
         print("[DEBUG] Debug mode enabled")
 
-
     sync_runtime_config(config)
 
-
     stage = args.stage
-
 
     if stage == 'pretrain':
         use_planner = False
     else:
         use_planner = not args.no_planner
-
 
     n_envs = args.n_envs if args.n_envs is not None else config.N_ENVS
     watch_mode = args.watch
@@ -1432,7 +1379,6 @@ def main():
         if swarm_drones > 1 and args.watch_fps <= 30:
             print("[WATCH] For smoother swarm rendering use --watch-fps 60..120")
 
-
     if args.timesteps is None:
         if stage == '0':
             timesteps = 500_000
@@ -1442,7 +1388,6 @@ def main():
             timesteps = 500_000
     else:
         timesteps = args.timesteps
-
 
     if stage == '0':
         if use_planner:
@@ -1488,7 +1433,6 @@ def main():
         else:
             log_name = f"{algo_name}_{log_name}"
 
-
     enhanced_obs = bool(getattr(config, "USE_ENHANCED_OBS", False))
     if enhanced_obs:
         obs_suffix = "_enhanced_obs"
@@ -1498,7 +1442,6 @@ def main():
         else:
             normalize_path = f"{normalize_path}{obs_suffix}"
         log_name = f"{log_name}{obs_suffix}"
-
 
     if swarm_drones > 1:
         swarm_suffix = f"_swarm{swarm_drones}"
@@ -1526,7 +1469,6 @@ def main():
         log_run_name = f"{log_name}_{safe_run_tag}"
     else:
         log_run_name = log_name
-
 
     print("=" * 60)
     print(f"DRONE NAVIGATION TRAINING - STAGE {stage.upper()}")
@@ -1588,7 +1530,6 @@ def main():
         else:
             print(f"  Training on: {args.obstacle_type.upper()} only")
 
-
     checkpoint_exists = os.path.exists(f"{model_path}.zip") and os.path.exists(normalize_path)
     checkpoint_model_path = args.init_model if args.init_model else f"{model_path}.zip"
     checkpoint_normalize_path = args.init_normalize if args.init_normalize else normalize_path
@@ -1596,7 +1537,6 @@ def main():
     if args.continue_training:
         print(f"  Continue from model: {checkpoint_model_path}")
         print(f"  Continue from normalize: {checkpoint_normalize_path}")
-
 
     stage0_model = "models/ppo_drone_nav_stage0_planner.zip"
     stage0_normalize = "models/vec_normalize_stage0_planner.pkl"
@@ -1612,7 +1552,6 @@ def main():
 
     os.makedirs("logs", exist_ok=True)
     os.makedirs("models", exist_ok=True)
-
 
     print(f"\n[SETUP] Creating environments...")
     if stage == '0':
@@ -1639,7 +1578,6 @@ def main():
         print("✓ DummyVecEnv created (watch mode)")
     else:
         vec_env = SubprocVecEnv(env_fns)
-
 
     if args.continue_training:
         if not (os.path.exists(checkpoint_model_path) and os.path.exists(checkpoint_normalize_path)):
@@ -1704,7 +1642,6 @@ def main():
             device="auto"
         )
         print("✓ Model created")
-
 
     diag_logger = TrainingDiagnosticsLogger(
         enabled=args.diag,
@@ -1860,8 +1797,6 @@ def main():
     except KeyboardInterrupt:
         print("\n\n[INFO] Training interrupted by user")
 
-
-
     print(f"\n[SAVE] Saving model...")
     os.makedirs(last_model_dir, exist_ok=True)
     model.save(last_model_path)
@@ -1906,7 +1841,6 @@ def main():
     if args.diag and diag_logger.run_dir is not None:
         print(f"[DIAGNOSTICS] Structured logs saved to: {diag_logger.run_dir}")
 
-
     print("\n[NEXT STEPS]")
     if stage == '0':
         print("  1. Visualize Stage 0:")
@@ -1931,7 +1865,6 @@ def main():
         print(f"     python visualization/preview_scenarios.py --stage pretrain --obstacle-type {args.obstacle_type}")
         print("\n  3. Train on different obstacle type:")
         print(f"     python training/train.py --algo {algo} --stage pretrain --obstacle-type spheres")
-
 
 if __name__ == "__main__":
     main()

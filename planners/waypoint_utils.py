@@ -1,6 +1,5 @@
 import numpy as np
 
-
 def dilate_waypoints(waypoints, factor: int) -> list:
     if factor == 0:
         return waypoints

@@ -9,7 +9,6 @@ import sys
 import time
 from pathlib import Path
 
-
 ALGO_CHOICES = ("ppo", "recurrent_ppo")
 
 DEFAULT_STAGES = (
@@ -44,29 +43,23 @@ DEFAULT_TARGETS = {
     "construction_site_dynamic": 0.99,
 }
 
-
 def repo_root() -> Path:
     return Path(__file__).resolve().parents[1]
-
 
 def split_csv(value: str) -> list[str]:
     if not value:
         return []
     return [item.strip() for item in value.split(",") if item.strip()]
 
-
 def safe_run_tag(value: str) -> str:
     raw = str(value or "").strip()
     return "".join(ch if ch.isalnum() or ch in "._-" else "_" for ch in raw).strip("_")
 
-
 def algo_display_name(algo: str) -> str:
     return "RecurrentPPO" if algo == "recurrent_ppo" else "PPO"
 
-
 def model_prefix(algo: str) -> str:
     return "recurrent_ppo" if algo == "recurrent_ppo" else "ppo"
-
 
 def pretrain_obs_suffix() -> str:
     root = str(repo_root())
@@ -78,11 +71,9 @@ def pretrain_obs_suffix() -> str:
     cfg = load_config("pretrain")
     return "_enhanced_obs" if getattr(cfg, "USE_ENHANCED_OBS", False) else ""
 
-
 def artifact_suffix(artifact_tag: str) -> str:
     tag = safe_run_tag(artifact_tag)
     return f"_{tag}" if tag else ""
-
 
 def normalize_filename(algo: str, obstacle_type: str, artifact_tag: str = "") -> str:
     if algo == "recurrent_ppo":
@@ -97,7 +88,6 @@ def normalize_filename(algo: str, obstacle_type: str, artifact_tag: str = "") ->
     if suffix:
         base = base[:-4] + f"{suffix}.pkl"
     return base
-
 
 def checkpoint_candidates(root: Path, algo: str, obstacle_type: str, artifact_tag: str = "") -> list[tuple[Path, Path, str]]:
     display = algo_display_name(algo)
@@ -124,13 +114,11 @@ def checkpoint_candidates(root: Path, algo: str, obstacle_type: str, artifact_ta
         ),
     ]
 
-
 def find_checkpoint(root: Path, algo: str, obstacle_type: str, artifact_tag: str = "") -> tuple[Path, Path, str] | None:
     for model_path, normalize_path, label in checkpoint_candidates(root, algo, obstacle_type, artifact_tag):
         if model_path.exists() and normalize_path.exists():
             return model_path, normalize_path, label
     return None
-
 
 def parse_target_overrides(value: str) -> dict[str, float]:
     targets = dict(DEFAULT_TARGETS)
@@ -144,7 +132,6 @@ def parse_target_overrides(value: str) -> dict[str, float]:
         targets[name.strip()] = rate
     return targets
 
-
 def run_command(root: Path, command: list[str], dry_run: bool) -> None:
     print("\n[CMD] " + " ".join(command), flush=True)
     if dry_run:
@@ -152,7 +139,6 @@ def run_command(root: Path, command: list[str], dry_run: bool) -> None:
     completed = subprocess.run(command, cwd=root)
     if completed.returncode != 0:
         raise RuntimeError(f"Command failed with exit code {completed.returncode}")
-
 
 def evaluate_policy(
     root: Path,
@@ -199,10 +185,8 @@ def evaluate_policy(
     print(f"[EVAL] {obstacle_type}: success={success_rate:.1%} report={report_path}", flush=True)
     return success_rate
 
-
 def staged_seed(base_seed: int, stage_idx: int, round_idx: int, stride: int) -> int:
     return int(base_seed + stage_idx * stride + round_idx)
-
 
 def train_chunk(
     root: Path,
@@ -269,7 +253,6 @@ def train_chunk(
         command.extend(["--artifact-tag", args.artifact_tag])
 
     run_command(root, command, dry_run=args.dry_run)
-
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run staged overnight pretrain curriculum")
@@ -490,7 +473,6 @@ def main() -> None:
         print(f"[CURRICULUM] Final normalize: {current_normalize}", flush=True)
 
     maybe_generate_plots()
-
 
 if __name__ == "__main__":
     main()

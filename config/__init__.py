@@ -1,6 +1,5 @@
 from types import SimpleNamespace
 
-
 def load_config(stage='0'):
     if stage == '0':
         from . import stage0 as cfg
@@ -11,14 +10,12 @@ def load_config(stage='0'):
     else:
         raise ValueError(f"Unknown stage: {stage}. Must be '0', '1', or 'pretrain'")
 
-
     from . import debug
     for key in dir(debug):
         if not key.startswith('_'):
             setattr(cfg, key, getattr(debug, key))
 
     return cfg
-
 
 def apply_pretrain_obstacle_overrides(cfg, obstacle_type):
     params = getattr(cfg, "OBSTACLE_TYPES", {}).get(obstacle_type, {})
@@ -33,7 +30,6 @@ def apply_pretrain_obstacle_overrides(cfg, obstacle_type):
     }
     values.update(overrides)
     return SimpleNamespace(**values)
-
 
 from .base import *
 from .debug import *

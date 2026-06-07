@@ -4,7 +4,6 @@ from typing import List, Tuple, Optional
 from scipy.spatial import KDTree
 import time
 
-
 class Node:
 
     def __init__(self, position: np.ndarray, parent: Optional['Node'] = None):
@@ -15,7 +14,6 @@ class Node:
 
     def __repr__(self):
         return f"Node(pos={self.position}, cost={self.cost:.2f})"
-
 
 class RRTStarPlanner:
 
@@ -39,13 +37,10 @@ class RRTStarPlanner:
         self.collision_check_resolution = collision_check_resolution
         self.verbose = verbose
 
-
         self.nodes = []
         self.kdtree = None
 
-
         self.obstacles = []
-
 
         self.planning_time = 0.0
         self.iterations_used = 0
@@ -58,7 +53,6 @@ class RRTStarPlanner:
         obstacles: List
     ) -> Optional[List[np.ndarray]]:
         start_time = time.time()
-
 
         self.nodes = []
         self.obstacles = obstacles
@@ -75,7 +69,6 @@ class RRTStarPlanner:
             print(f"[RRT*] Obstacles: {len(obstacles)}")
             print(f"[RRT*] Max iterations: {self.max_iter}")
 
-
         for iteration in range(self.max_iter):
 
             if np.random.random() < self.goal_bias:
@@ -83,19 +76,14 @@ class RRTStarPlanner:
             else:
                 sample = self._sample_free()
 
-
             nearest_node = self._nearest(sample)
 
-
             new_pos = self._steer(nearest_node.position, sample)
-
 
             if not self._collision_free(nearest_node.position, new_pos):
                 continue
 
-
             neighbors = self._near(new_pos)
-
 
             min_cost = nearest_node.cost + self._distance(nearest_node.position, new_pos)
             best_parent = nearest_node
@@ -107,16 +95,13 @@ class RRTStarPlanner:
                         min_cost = cost
                         best_parent = neighbor
 
-
             new_node = Node(new_pos, parent=best_parent)
             new_node.cost = min_cost
             best_parent.children.append(new_node)
             self.nodes.append(new_node)
 
-
             if len(self.nodes) % 100 == 0:
                 self._rebuild_kdtree()
-
 
             for neighbor in neighbors:
                 new_cost = new_node.cost + self._distance(new_node.position, neighbor.position)
@@ -126,14 +111,11 @@ class RRTStarPlanner:
                         if neighbor.parent:
                             neighbor.parent.children.remove(neighbor)
 
-
                         neighbor.parent = new_node
                         neighbor.cost = new_cost
                         new_node.children.append(neighbor)
 
-
                         self._update_descendants_cost(neighbor)
-
 
             dist_to_goal = self._distance(new_pos, goal)
             if dist_to_goal < self.goal_threshold:
@@ -144,14 +126,12 @@ class RRTStarPlanner:
                     if self.verbose >= 2:
                         print(f"[RRT*] Goal reached at iteration {iteration+1}, cost: {best_goal_cost:.2f}")
 
-
             if self.verbose >= 2 and (iteration + 1) % 500 == 0:
                 best_cost_str = f"{best_goal_cost:.2f}" if best_goal_node else "inf"
                 print(f"[RRT*] Iteration {iteration+1}/{self.max_iter}, nodes: {len(self.nodes)}, best_cost: {best_cost_str}")
 
         self.planning_time = time.time() - start_time
         self.iterations_used = self.max_iter
-
 
         if best_goal_node is not None:
             path = self._extract_path(best_goal_node)
@@ -162,7 +142,6 @@ class RRTStarPlanner:
 
             if self.verbose >= 2:
                 print(f"[RRT*]   Tree nodes: {len(self.nodes)}")
-
 
             smoothed_path = self._smooth_path(path)
             if self.verbose >= 2:
@@ -190,7 +169,6 @@ class RRTStarPlanner:
         if len(self.nodes) == 1:
             return self.nodes[0]
 
-
         _, idx = self.kdtree.query(point)
         return self.nodes[idx]
 
@@ -200,7 +178,6 @@ class RRTStarPlanner:
 
         if len(self.nodes) == 1:
             return []
-
 
         indices = self.kdtree.query_ball_point(point, self.rewire_radius)
         return [self.nodes[i] for i in indices]
@@ -227,17 +204,14 @@ class RRTStarPlanner:
         distance = self._distance(pos1, pos2)
         n_checks = max(2, int(np.ceil(distance / self.collision_check_resolution)))
 
-
         if len(self.obstacles) > 0:
             for obstacle in self.obstacles:
                 if self._point_in_cylinder(pos1, obstacle) or self._point_in_cylinder(pos2, obstacle):
                     return False
 
-
         for i in range(1, n_checks):
             t = i / n_checks
             point = pos1 + t * (pos2 - pos1)
-
 
             for obstacle in self.obstacles:
                 if self._point_in_cylinder(point, obstacle):
@@ -248,11 +222,9 @@ class RRTStarPlanner:
     def _point_in_cylinder(self, point: np.ndarray, obstacle) -> bool:
         obs_pos = obstacle.get_position()
 
-
         horizontal_dist = np.linalg.norm(point[:2] - obs_pos[:2])
         if horizontal_dist > obstacle.radius:
             return False
-
 
         if point[2] < obs_pos[2] or point[2] > obs_pos[2] + obstacle.height:
             return False
@@ -271,7 +243,6 @@ class RRTStarPlanner:
         while node is not None:
             path.append(node.position.copy())
             node = node.parent
-
 
         path.reverse()
         return path
@@ -303,7 +274,6 @@ class RRTStarPlanner:
                         best_idx = target_idx
                         break
 
-
             if best_idx is not None:
                 smoothed.append(path[best_idx])
                 current_idx = best_idx
@@ -333,10 +303,8 @@ class RRTStarPlanner:
         if dist <= max_dist:
             return [start, goal]
 
-
         n_segments = int(np.ceil(dist / max_dist))
         points = [start]
-
 
         for i in range(1, n_segments):
             t = i / n_segments

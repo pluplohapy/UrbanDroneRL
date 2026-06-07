@@ -24,7 +24,6 @@ try:
 except Exception:
     event_accumulator = None
 
-
 FIGURES: list[str] = []
 RAW_LABELS: dict[str, str] = {}
 SHORT_LABELS: dict[str, str] = {}
@@ -114,14 +113,11 @@ FAILURE_LABELS = {
     "timeout": "Таймауты",
 }
 
-
 def repo_root() -> Path:
     return Path(__file__).resolve().parents[1]
 
-
 def parse_csv(value: str) -> list[str]:
     return [item.strip() for item in value.split(",") if item.strip()]
-
 
 def flatten_dict(payload: dict[str, Any], prefix: str = "") -> dict[str, Any]:
     flat: dict[str, Any] = {}
@@ -132,7 +128,6 @@ def flatten_dict(payload: dict[str, Any], prefix: str = "") -> dict[str, Any]:
         else:
             flat[name] = value
     return flat
-
 
 def read_jsonl(path: Path, max_rows: int | None = None) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
@@ -152,17 +147,14 @@ def read_jsonl(path: Path, max_rows: int | None = None) -> list[dict[str, Any]]:
                 break
     return rows
 
-
 def numeric_columns(df: pd.DataFrame, columns: list[str]) -> pd.DataFrame:
     for column in columns:
         if column in df.columns:
             df[column] = pd.to_numeric(df[column], errors="coerce")
     return df
 
-
 def filter_terms(value: str) -> list[str]:
     return [item.strip().lower() for item in value.split(",") if item.strip()]
-
 
 def text_matches_filters(text: Any, include_filter: str, exclude_filter: str = "") -> bool:
     haystack = str(text).lower()
@@ -171,7 +163,6 @@ def text_matches_filters(text: Any, include_filter: str, exclude_filter: str = "
     if include_terms and not any(term in haystack for term in include_terms):
         return False
     return not any(term in haystack for term in exclude_terms)
-
 
 def maybe_filter_run(df: pd.DataFrame, run_filter: str, exclude_run_filter: str = "") -> pd.DataFrame:
     if (not run_filter and not exclude_run_filter) or df.empty:
@@ -189,7 +180,6 @@ def maybe_filter_run(df: pd.DataFrame, run_filter: str, exclude_run_filter: str 
             for term in exclude_terms:
                 exclude_mask = exclude_mask | values.str.contains(term, regex=False, na=False)
     return df[include_mask & ~exclude_mask].copy()
-
 
 def setup_style(presentation: bool = False) -> None:
     global PRESENTATION_STYLE, LINE_WIDTH, LEGEND_FONTSIZE
@@ -232,7 +222,6 @@ def setup_style(presentation: bool = False) -> None:
         "legend.fontsize": 8,
     })
 
-
 def sci_tick(value: float, _position: int | None = None) -> str:
     if not np.isfinite(value):
         return ""
@@ -250,22 +239,18 @@ def sci_tick(value: float, _position: int | None = None) -> str:
         mantissa_text = f"{rounded_mantissa:.1f}".rstrip("0").rstrip(".")
     return f"{sign}{mantissa_text}E{exponent}"
 
-
 def format_training_step_axis(ax: plt.Axes) -> None:
     ax.xaxis.set_major_formatter(FuncFormatter(sci_tick))
-
 
 def readable_prefix(value: str) -> str:
     key = value.strip().lower()
     return PREFIX_LABELS.get(key, value.strip())
-
 
 def with_readable_prefix(prefix: str, label: str) -> str:
     prefix = prefix.strip()
     if not prefix:
         return label
     return f"{readable_prefix(prefix)} — {label}"
-
 
 def compact_group_label(value: Any) -> str:
     raw = str(value)
@@ -298,7 +283,6 @@ def compact_group_label(value: Any) -> str:
     SHORT_LABELS[label] = raw
     return label
 
-
 def run_sort_key(value: Any) -> tuple[int, str]:
     raw = str(value)
     stamps = re.findall(r"(\d{8})_(\d{6})", raw)
@@ -306,7 +290,6 @@ def run_sort_key(value: Any) -> tuple[int, str]:
         date, clock = stamps[-1]
         return int(f"{date}{clock}"), raw
     return 0, raw
-
 
 def stitch_run_steps(
     df: pd.DataFrame,
@@ -344,7 +327,6 @@ def stitch_run_steps(
         return df
     return pd.concat(stitched_parts, ignore_index=True)
 
-
 def add_tensorboard_run_ids(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty or "event_file" not in df.columns:
         return df
@@ -363,7 +345,6 @@ def add_tensorboard_run_ids(df: pd.DataFrame) -> pd.DataFrame:
     df["run_id"] = df["event_file"].map(lambda item: run_ids.get(str(item), str(item)))
     return df
 
-
 def collect_figure_legend(fig: plt.Figure) -> tuple[list[Any], list[str]]:
     deduped: dict[str, Any] = {}
     for ax in fig.axes:
@@ -378,7 +359,6 @@ def collect_figure_legend(fig: plt.Figure) -> tuple[list[Any], list[str]]:
     handles = [deduped[label] for label in labels]
     return handles, labels
 
-
 def legend_bottom_space(label_count: int, max_entries: int) -> float:
     if label_count <= 0 or label_count > max_entries:
         return 0.07 if PRESENTATION_STYLE else 0.05
@@ -387,7 +367,6 @@ def legend_bottom_space(label_count: int, max_entries: int) -> float:
     if PRESENTATION_STYLE:
         return min(0.42, 0.14 + nrows * 0.07)
     return min(0.34, 0.08 + nrows * 0.04)
-
 
 def place_figure_legend(fig: plt.Figure, handles: list[Any], labels: list[str], max_entries: int = 24) -> None:
     if not handles or len(labels) > max_entries:
@@ -406,7 +385,6 @@ def place_figure_legend(fig: plt.Figure, handles: list[Any], labels: list[str], 
         columnspacing=1.4 if PRESENTATION_STYLE else 1.0,
         labelspacing=0.8 if PRESENTATION_STYLE else 0.5,
     )
-
 
 def save_figure(fig: plt.Figure, out_dir: Path, stem: str, formats: list[str]) -> None:
     handles, labels = collect_figure_legend(fig)
@@ -430,12 +408,10 @@ def save_figure(fig: plt.Figure, out_dir: Path, stem: str, formats: list[str]) -
         FIGURES.append(str(path.relative_to(out_dir)))
     plt.close(fig)
 
-
 def smooth_series(values: pd.Series, window: int) -> pd.Series:
     if window <= 1 or len(values) < 3:
         return values
     return values.rolling(window=min(window, len(values)), min_periods=1).mean()
-
 
 def plot_grouped_lines(
     ax: plt.Axes,
@@ -459,7 +435,6 @@ def plot_grouped_lines(
         marker = None if LINE_ONLY else ("o" if len(part) < 30 else None)
         ax.plot(part[x], y_values, marker=marker, linewidth=LINE_WIDTH, label=label)
 
-
 def merge_runs_for_plots(df: pd.DataFrame, label: str) -> pd.DataFrame:
     if df.empty or not label:
         return df
@@ -468,7 +443,6 @@ def merge_runs_for_plots(df: pd.DataFrame, label: str) -> pd.DataFrame:
         if column in df.columns:
             df[column] = label
     return df
-
 
 def load_eval_history(eval_dir: Path, run_filter: str, exclude_run_filter: str = "") -> pd.DataFrame:
     rows: list[dict[str, Any]] = []
@@ -500,7 +474,6 @@ def load_eval_history(eval_dir: Path, run_filter: str, exclude_run_filter: str =
     if "run_id" not in df.columns:
         df["run_id"] = df["log_name"]
     return maybe_filter_run(df, run_filter, exclude_run_filter)
-
 
 def load_diagnostics(
     diagnostics_dir: Path,
@@ -580,7 +553,6 @@ def load_diagnostics(
 
     return milestones, episodes, summaries
 
-
 def load_curriculum_reports(reports_dir: Path, run_filter: str, exclude_run_filter: str = "") -> pd.DataFrame:
     rows: list[dict[str, Any]] = []
     apply_run_filter = (
@@ -620,7 +592,6 @@ def load_curriculum_reports(reports_dir: Path, run_filter: str, exclude_run_filt
         ["success_rate", "crash_rate", "timeout_rate", "mean_reward", "mean_steps", "mean_final_dist"],
     )
 
-
 def load_tensorboard_scalars(logs_dir: Path, run_filter: str, exclude_run_filter: str = "") -> pd.DataFrame:
     if event_accumulator is None:
         return pd.DataFrame()
@@ -656,7 +627,6 @@ def load_tensorboard_scalars(logs_dir: Path, run_filter: str, exclude_run_filter
                 })
 
     return pd.DataFrame(rows)
-
 
 def plot_eval_history(df: pd.DataFrame, out_dir: Path, formats: list[str], smooth: int) -> None:
     if df.empty:
@@ -694,7 +664,6 @@ def plot_eval_history(df: pd.DataFrame, out_dir: Path, formats: list[str], smoot
     fig.suptitle("Периодическая оценка модели", y=1.02)
     save_figure(fig, out_dir, "01_eval_history", formats)
 
-
 def plot_milestones(df: pd.DataFrame, out_dir: Path, formats: list[str], smooth: int) -> None:
     if df.empty:
         return
@@ -727,7 +696,6 @@ def plot_milestones(df: pd.DataFrame, out_dir: Path, formats: list[str], smooth:
         format_training_step_axis(ax)
     fig.suptitle("Диагностика обучения по скользящему окну", y=1.02)
     save_figure(fig, out_dir, "02_training_milestones", formats)
-
 
 def plot_tensorboard(df: pd.DataFrame, out_dir: Path, formats: list[str], smooth: int, plot_set: str) -> None:
     if df.empty:
@@ -844,7 +812,6 @@ def plot_tensorboard(df: pd.DataFrame, out_dir: Path, formats: list[str], smooth
         fig.suptitle(title, y=1.01)
         save_figure(fig, out_dir, stem, formats)
 
-
 def plot_reward_components(summary_df: pd.DataFrame, out_dir: Path, formats: list[str]) -> None:
     if summary_df.empty:
         return
@@ -873,7 +840,6 @@ def plot_reward_components(summary_df: pd.DataFrame, out_dir: Path, formats: lis
     ax.set_title("Средний вклад компонентов награды")
     ax.set_xlabel("Средний вклад компонента")
     save_figure(fig, out_dir, "05_reward_components", formats)
-
 
 def plot_failure_breakdown(summary_df: pd.DataFrame, out_dir: Path, formats: list[str]) -> None:
     if summary_df.empty:
@@ -905,7 +871,6 @@ def plot_failure_breakdown(summary_df: pd.DataFrame, out_dir: Path, formats: lis
     ax.set_title("Распределение причин завершения эпизода")
     ax.set_ylabel("Количество эпизодов")
     save_figure(fig, out_dir, "06_failure_breakdown", formats)
-
 
 def plot_episode_cloud(episodes_df: pd.DataFrame, out_dir: Path, formats: list[str]) -> None:
     if episodes_df.empty or "timesteps" not in episodes_df.columns:
@@ -945,7 +910,6 @@ def plot_episode_cloud(episodes_df: pd.DataFrame, out_dir: Path, formats: list[s
         format_training_step_axis(ax)
     fig.suptitle("Диагностика отдельных эпизодов", y=1.02)
     save_figure(fig, out_dir, "07_episode_diagnostics", formats)
-
 
 def plot_behavior_by_outcome(summary_df: pd.DataFrame, out_dir: Path, formats: list[str]) -> None:
     if summary_df.empty:
@@ -1004,7 +968,6 @@ def plot_behavior_by_outcome(summary_df: pd.DataFrame, out_dir: Path, formats: l
     fig.suptitle("Поведение агента по исходам эпизода", y=1.02)
     save_figure(fig, out_dir, "08_behavior_by_outcome", formats)
 
-
 def plot_curriculum_reports(reports_df: pd.DataFrame, out_dir: Path, formats: list[str]) -> None:
     if reports_df.empty or "obstacle_type" not in reports_df.columns:
         return
@@ -1032,7 +995,6 @@ def plot_curriculum_reports(reports_df: pd.DataFrame, out_dir: Path, formats: li
     axes[1].set_ylabel("Доля эпизодов")
     axes[1].tick_params(axis="x", rotation=35)
     save_figure(fig, out_dir, "09_curriculum_obstacle_summary", formats)
-
 
 def write_overview(
     out_dir: Path,
@@ -1105,7 +1067,6 @@ def write_overview(
         ])
     (out_dir / "README.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
-
 def save_csvs(
     out_dir: Path,
     eval_df: pd.DataFrame,
@@ -1126,7 +1087,6 @@ def save_csvs(
     for filename, df in datasets.items():
         if not df.empty:
             df.to_csv(out_dir / filename, index=False)
-
 
 def main() -> None:
     global STEP_AXIS_LABEL, LINE_ONLY
@@ -1205,7 +1165,6 @@ def main() -> None:
     print(f"[PLOTS] Saved report to: {out_dir}")
     for figure in FIGURES:
         print(f"[PLOTS]   {figure}")
-
 
 if __name__ == "__main__":
     main()

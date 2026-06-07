@@ -13,7 +13,6 @@ from envs.nav_aviary_planner import NavAviaryWithPlanner
 from scenarios.stage1_static import Stage1Scenario
 import config
 
-
 class ComparisonCallback(BaseCallback):
 
     def __init__(self, name, verbose=0):
@@ -46,7 +45,6 @@ class ComparisonCallback(BaseCallback):
             'timesteps': self.timesteps
         }
 
-
 def make_env_baseline(rank, seed=0):
     def _init():
         scenario = Stage1Scenario(seed=seed + rank)
@@ -54,7 +52,6 @@ def make_env_baseline(rank, seed=0):
         env = Monitor(env)
         return env
     return _init
-
 
 def make_env_planner(rank, seed=0):
     def _init():
@@ -77,12 +74,10 @@ def make_env_planner(rank, seed=0):
         return env
     return _init
 
-
 def train_model(env_fns, name, total_timesteps=500000):
     print(f"\n{'='*60}")
     print(f"TRAINING: {name}")
     print(f"{'='*60}")
-
 
     vec_env = SubprocVecEnv(env_fns)
     vec_env = VecNormalize(
@@ -93,7 +88,6 @@ def train_model(env_fns, name, total_timesteps=500000):
         clip_reward=10.0
     )
 
-
     model = PPO(
         **config.PPO_PARAMS,
         env=vec_env,
@@ -101,14 +95,12 @@ def train_model(env_fns, name, total_timesteps=500000):
         device="auto"
     )
 
-
     callback = ComparisonCallback(name=name)
     model.learn(
         total_timesteps=total_timesteps,
         callback=callback,
         progress_bar=True
     )
-
 
     model_path = f"models/comparison_{name.lower().replace(' ', '_')}"
     model.save(model_path)
@@ -119,12 +111,10 @@ def train_model(env_fns, name, total_timesteps=500000):
 
     return callback.get_stats()
 
-
 def plot_comparison(stats_list):
     fig, axes = plt.subplots(2, 2, figsize=(14, 10))
 
     colors = ['blue', 'red', 'green', 'orange']
-
 
     ax = axes[0, 0]
     for i, stats in enumerate(stats_list):
@@ -145,7 +135,6 @@ def plot_comparison(stats_list):
     ax.set_title('Training Rewards')
     ax.legend()
     ax.grid(True, alpha=0.3)
-
 
     ax = axes[0, 1]
     for i, stats in enumerate(stats_list):
@@ -169,7 +158,6 @@ def plot_comparison(stats_list):
     ax.grid(True, alpha=0.3)
     ax.set_ylim([0, 1])
 
-
     ax = axes[1, 0]
     for i, stats in enumerate(stats_list):
 
@@ -189,7 +177,6 @@ def plot_comparison(stats_list):
     ax.set_title('Episode Length Over Training')
     ax.legend()
     ax.grid(True, alpha=0.3)
-
 
     ax = axes[1, 1]
     names = [s['name'] for s in stats_list]
@@ -217,7 +204,6 @@ def plot_comparison(stats_list):
     print(f"\n✓ Comparison plot saved to comparison_results.png")
     plt.show()
 
-
 def main():
     print("="*60)
     print("RRT* PLANNER COMPARISON EXPERIMENT")
@@ -232,10 +218,8 @@ def main():
 
     os.makedirs("models", exist_ok=True)
 
-
     n_envs = config.N_ENVS
     total_timesteps = 500000
-
 
     print("\n" + "="*60)
     print("EXPERIMENT 1/2: Baseline (No Planner)")
@@ -243,13 +227,11 @@ def main():
     env_fns_baseline = [make_env_baseline(i, config.SEED) for i in range(n_envs)]
     stats_baseline = train_model(env_fns_baseline, "Baseline", total_timesteps)
 
-
     print("\n" + "="*60)
     print("EXPERIMENT 2/2: With RRT* Planner")
     print("="*60)
     env_fns_planner = [make_env_planner(i, config.SEED) for i in range(n_envs)]
     stats_planner = train_model(env_fns_planner, "RRT* Planner", total_timesteps)
-
 
     print("\n" + "="*60)
     print("COMPARISON RESULTS")
@@ -273,7 +255,6 @@ def main():
             final_length = np.mean(stats['lengths'][-100:])
             print(f"  Final avg length (last 100): {final_length:.1f}")
 
-
     print("\n" + "="*60)
     print("GENERATING COMPARISON PLOTS")
     print("="*60)
@@ -285,7 +266,6 @@ def main():
     print("\nResults saved:")
     print("  - Models: models/comparison_*.zip")
     print("  - Plot: comparison_results.png")
-
 
 if __name__ == "__main__":
     main()

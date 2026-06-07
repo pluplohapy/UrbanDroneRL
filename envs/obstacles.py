@@ -2,7 +2,6 @@ import numpy as np
 import pybullet as p
 from typing import Tuple, Optional
 
-
 class StaticObstacle:
 
     def __init__(self, position: np.ndarray, radius: float, height: float,
@@ -43,7 +42,6 @@ class StaticObstacle:
 
     def remove(self):
         p.removeBody(self.body_id, physicsClientId=self.physics_client)
-
 
 class DynamicObstacle:
 

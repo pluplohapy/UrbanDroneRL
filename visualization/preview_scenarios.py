@@ -5,7 +5,6 @@ import sys
 import os
 import numpy as np
 
-
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import pybullet as p
@@ -33,7 +32,6 @@ PRETRAIN_OBSTACLE_CHOICES = (
     'swinging_sticks',
 )
 
-
 def add_marker(position, color, size=0.2, client_id=0):
     visual_shape = p.createVisualShape(
         p.GEOM_SPHERE,
@@ -51,19 +49,16 @@ def add_marker(position, color, size=0.2, client_id=0):
 
     return marker_id
 
-
 def add_line(start, end, color, width=3, client_id=0):
     return p.addUserDebugLine(
         start, end, color, lineWidth=width,
         physicsClientId=client_id
     )
 
-
 def preview_scenario(stage, obstacle_type, duration, continuous):
 
     client = p.connect(p.GUI)
     p.setAdditionalSearchPath(pybullet_data.getDataPath())
-
 
     p.resetDebugVisualizerCamera(
         cameraDistance=20,
@@ -73,19 +68,15 @@ def preview_scenario(stage, obstacle_type, duration, continuous):
         physicsClientId=client
     )
 
-
     config = load_config(stage)
     if stage == "pretrain":
         config = apply_pretrain_obstacle_overrides(config, obstacle_type)
 
-
     p.loadURDF("plane.urdf", physicsClientId=client)
-
 
     arena_x = config.ARENA_SIZE_X
     arena_y = config.ARENA_SIZE_Y
     arena_h = config.ARENA_HEIGHT
-
 
     corners = [
         [-arena_x/2, -arena_y/2, 0],
@@ -123,14 +114,12 @@ def preview_scenario(stage, obstacle_type, duration, continuous):
             scenario_count += 1
             print(f"\n[Scenario {scenario_count}]")
 
-
             if stage == '0':
                 scenario = Stage0Scenario()
             elif stage == '1':
                 scenario = Stage1Scenario()
             else:
                 scenario = StagePretrainScenario(obstacle_type=obstacle_type)
-
 
             start_pos, goal_pos = scenario.reset(client)
 
@@ -143,24 +132,19 @@ def preview_scenario(stage, obstacle_type, duration, continuous):
             if stage != '0':
                 print(f"  Obstacles: {len(scenario.obstacles)}")
 
-
                 dynamic_count = sum(1 for obs in scenario.obstacles
                                   if hasattr(obs, 'dynamic') and obs.dynamic)
                 if dynamic_count > 0:
                     print(f"  Dynamic obstacles: {dynamic_count}")
 
-
             start_marker = add_marker(start_pos, [0, 1, 0, 1], size=0.3, client_id=client)
             markers.append(start_marker)
-
 
             goal_marker = add_marker(goal_pos, [1, 0, 0, 1], size=0.3, client_id=client)
             markers.append(goal_marker)
 
-
             line = add_line(start_pos, goal_pos, [1, 1, 0], width=2, client_id=client)
             lines.append(line)
-
 
             start_time = time.time()
             while time.time() - start_time < duration:
@@ -168,7 +152,6 @@ def preview_scenario(stage, obstacle_type, duration, continuous):
                 scenario.update_dynamic_obstacles(0.01)
                 p.stepSimulation(physicsClientId=client)
                 time.sleep(0.01)
-
 
             if continuous:
 
@@ -180,7 +163,6 @@ def preview_scenario(stage, obstacle_type, duration, continuous):
                     p.removeUserDebugItem(line, physicsClientId=client)
                 lines.clear()
 
-
                 scenario.cleanup()
             else:
                 break
@@ -190,7 +172,6 @@ def preview_scenario(stage, obstacle_type, duration, continuous):
 
     finally:
         p.disconnect(physicsClientId=client)
-
 
 def main():
     parser = argparse.ArgumentParser(description='Preview scenario generation')
@@ -208,7 +189,6 @@ def main():
     args = parser.parse_args()
 
     preview_scenario(args.stage, args.obstacle_type, args.duration, args.continuous)
-
 
 if __name__ == "__main__":
     main()

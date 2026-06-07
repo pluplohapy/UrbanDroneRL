@@ -11,13 +11,11 @@ from scenarios.stage1_static import Stage1Scenario
 from planners.visualization import visualize_rrt_tree_3d, visualize_rrt_tree_2d
 import config
 
-
 def visualize_episode(env, model, render=True, save_video=False):
     obs = env.reset()
     done = False
     total_reward = 0
     steps = 0
-
 
     planner = env.envs[0].planner
     waypoints = env.envs[0].waypoints
@@ -31,7 +29,6 @@ def visualize_episode(env, model, render=True, save_video=False):
     print(f"[Episode] Waypoints: {len(waypoints)}")
     print(f"[Episode] Obstacles: {len(obstacles)}")
 
-
     goal_visual = p.createVisualShape(
         shapeType=p.GEOM_SPHERE,
         radius=config.SUCCESS_DIST,
@@ -44,7 +41,6 @@ def visualize_episode(env, model, render=True, save_video=False):
         basePosition=goal,
         physicsClientId=client
     )
-
 
     waypoint_threshold = env.envs[0].waypoint_threshold
     if planner is not None and len(waypoints) > 1:
@@ -63,7 +59,6 @@ def visualize_episode(env, model, render=True, save_video=False):
                 physicsClientId=client
             )
 
-
         for i in range(len(waypoints) - 1):
             p.addUserDebugLine(
                 waypoints[i],
@@ -72,7 +67,6 @@ def visualize_episode(env, model, render=True, save_video=False):
                 lineWidth=5,
                 physicsClientId=client
             )
-
 
     if planner is not None and len(waypoints) > 0:
         print(f"\n[Visualizing] RRT* tree and path...")
@@ -88,17 +82,14 @@ def visualize_episode(env, model, render=True, save_video=False):
         total_reward += reward[0]
         steps += 1
 
-
         drone_state = env.envs[0]._getDroneStateVector(0)
         drone_pos = drone_state[:3]
         drone_vel = drone_state[10:13]
         trajectory.append(drone_pos.copy())
 
-
         speed = np.linalg.norm(drone_vel)
         dist_to_goal = np.linalg.norm(goal - drone_pos)
         yaw_rate = abs(action[0][3]) * config.YAW_RATE_MAX if len(action[0]) > 3 else 0
-
 
         if 'current_waypoint_idx' in info[0]:
             current_wp_idx = info[0]['current_waypoint_idx']
@@ -107,7 +98,6 @@ def visualize_episode(env, model, render=True, save_video=False):
                       f"pos=[{drone_pos[0]:.2f}, {drone_pos[1]:.2f}, {drone_pos[2]:.2f}] | "
                       f"dist={dist_to_goal:.2f}m | speed={speed:.2f}m/s | "
                       f"yaw_rate={yaw_rate:.2f}rad/s | reward={reward[0]:.2f}")
-
 
     is_success = info[0].get('is_success', False)
     is_crash = info[0].get('is_crash', False)
@@ -118,7 +108,6 @@ def visualize_episode(env, model, render=True, save_video=False):
     print(f"  Steps: {steps}")
     print(f"  Total reward: {total_reward:.2f}")
     print(f"  Final distance to goal: {dist_to_goal:.2f}m")
-
 
     if planner is not None and len(waypoints) > 0:
         print(f"\n[Visualizing] Actual trajectory vs planned path...")
@@ -142,7 +131,6 @@ def visualize_episode(env, model, render=True, save_video=False):
         'dist_to_goal': dist_to_goal,
         'trajectory': trajectory
     }
-
 
 def main():
     parser = argparse.ArgumentParser(description='Visualize trained drone with RRT* planner')
@@ -177,7 +165,6 @@ def main():
     show_paths = args.show_paths or (not args.no_show_paths)
     print(f"[CONFIG] watch_fps={args.watch_fps}, show_paths={show_paths}")
 
-
     if args.normalize is None:
 
         if 'stage0' in args.model:
@@ -187,7 +174,6 @@ def main():
         else:
             detected_stage = args.stage
 
-
         if 'planner' in args.model or not args.no_planner:
             args.normalize = f'models/vec_normalize_stage{detected_stage}_planner.pkl'
         else:
@@ -195,14 +181,12 @@ def main():
 
         print(f"[INFO] Auto-detected normalize path: {args.normalize}")
 
-
     if args.stage == 0:
         scenario = Stage0Scenario(seed=args.seed)
         print(f"\n[Stage 0] Empty arena")
     else:
         scenario = Stage1Scenario(seed=args.seed)
         print(f"\n[Stage 1] Static obstacles")
-
 
     def make_env():
         env = NavAviaryWithPlanner(
@@ -230,10 +214,8 @@ def main():
 
     print(f"✓ Environment created")
 
-
     model = PPO.load(args.model)
     print(f"✓ Model loaded from {args.model}")
-
 
     results = []
     for episode in range(args.n_episodes):
@@ -244,10 +226,8 @@ def main():
         result = visualize_episode(env, model, render=not args.no_gui)
         results.append(result)
 
-
         if episode < args.n_episodes - 1:
             scenario.seed = args.seed + episode + 1
-
 
     print(f"\n{'='*60}")
     print(f"SUMMARY ({args.n_episodes} episodes)")
@@ -268,7 +248,6 @@ def main():
     print(f"Average reward: {avg_reward:.2f}")
     print(f"Average final distance: {avg_dist:.2f}m")
 
-
     successful = [r for r in results if r['success']]
     if successful:
         print(f"\nSuccessful episodes only:")
@@ -280,7 +259,6 @@ def main():
     print(f"\n{'='*60}")
     print("VISUALIZATION COMPLETED")
     print(f"{'='*60}")
-
 
 if __name__ == "__main__":
     main()

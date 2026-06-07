@@ -226,7 +226,6 @@ OBSTACLE_TYPES = {
         'spawn_validation_attempts': 40,
         'dynamic': True,
 
-
         'requires_explicit_obstacle_type': True,
         'config_overrides': {
             'ARENA_SIZE_X': 8.0,
@@ -341,7 +340,6 @@ OBSTACLE_TYPES = {
         'vertical_amplitude': (0.22, 0.50)
     }
 }
-
 
 SPHERE_MOVEMENT_AMPLITUDE = (0.35, 0.85)
 SPHERE_MOVEMENT_FREQUENCY = (0.12, 0.28)

@@ -2,7 +2,6 @@ import numpy as np
 import pybullet as p
 from typing import Iterable, Optional
 
-
 class RaycastSensor:
 
     def __init__(self, ray_length: float = 5.0):

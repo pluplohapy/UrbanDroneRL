@@ -12,7 +12,6 @@ try:
 except ImportError:
     RecurrentPPO = None
 
-
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from envs.nav_aviary import NavAviary
@@ -22,7 +21,6 @@ from scenarios.stage_pretrain import StagePretrainScenario
 from envs.visualization_utils import draw_arena_boundaries, draw_goal_marker
 from config import load_config, apply_pretrain_obstacle_overrides
 from config.runtime_sync import sync_runtime_config
-
 
 ALGO_CHOICES = ("ppo", "recurrent_ppo")
 PRETRAIN_OBSTACLE_CHOICES = (
@@ -43,7 +41,6 @@ PRETRAIN_OBSTACLE_CHOICES = (
     "swinging_sticks",
 )
 
-
 def get_algorithm_class(algo: str):
     if algo == "ppo":
         return PPO
@@ -54,7 +51,6 @@ def get_algorithm_class(algo: str):
             )
         return RecurrentPPO
     raise ValueError(f"Unknown algorithm: {algo}")
-
 
 def predict_with_optional_state(model, obs, deterministic: bool, lstm_states=None, episode_starts=None):
     if RecurrentPPO is not None and isinstance(model, RecurrentPPO):
@@ -70,17 +66,14 @@ def predict_with_optional_state(model, obs, deterministic: bool, lstm_states=Non
     action, _ = model.predict(obs, deterministic=deterministic)
     return action, None
 
-
 def _is_pybullet_disconnect_error(exc: Exception) -> bool:
     return "Not connected to physics server" in str(exc)
-
 
 def _visualization_client_connected(env) -> bool:
     try:
         return bool(p.isConnected(env.envs[0].CLIENT))
     except Exception:
         return False
-
 
 def visualize_flight(model_path="models/ppo_drone_nav_test",
                      vec_normalize_path="models/vec_normalize_test.pkl",
@@ -107,7 +100,6 @@ def visualize_flight(model_path="models/ppo_drone_nav_test",
     stage_config.SAFETY_SHIELD_ENABLED = bool(safety_shield)
     sync_runtime_config(stage_config)
 
-
     print("\n[SETUP] Creating visualization environment...")
 
     def make_env():
@@ -130,7 +122,6 @@ def visualize_flight(model_path="models/ppo_drone_nav_test",
 
     env = DummyVecEnv([make_env])
 
-
     try:
         env = VecNormalize.load(vec_normalize_path, env)
         env.training = False
@@ -138,7 +129,6 @@ def visualize_flight(model_path="models/ppo_drone_nav_test",
         print("✓ Normalization stats loaded")
     except FileNotFoundError:
         print("⚠ Normalization stats not found, using unnormalized environment")
-
 
     print(f"\n[LOAD] Loading model from {model_path}...")
     try:
@@ -155,7 +145,6 @@ def visualize_flight(model_path="models/ppo_drone_nav_test",
     print("  - Watch the drone navigate to the goal")
     print("\n" + "-" * 60)
 
-
     stop_visualization = False
     for episode in range(n_episodes):
         if stop_visualization:
@@ -169,7 +158,6 @@ def visualize_flight(model_path="models/ppo_drone_nav_test",
         print(f"\nEpisode {episode + 1}/{n_episodes}")
         print("-" * 60)
 
-
         draw_arena_boundaries(
             env.envs[0].CLIENT,
             stage_config.ARENA_SIZE_X,
@@ -177,12 +165,9 @@ def visualize_flight(model_path="models/ppo_drone_nav_test",
             stage_config.ARENA_HEIGHT
         )
 
-
         goal_pos = env.envs[0].goal_pos
 
-
         draw_goal_marker(goal_pos, env.envs[0].CLIENT)
-
 
         trajectory = []
 
@@ -199,7 +184,6 @@ def visualize_flight(model_path="models/ppo_drone_nav_test",
                 stop_visualization = True
                 break
 
-
             action, lstm_states = predict_with_optional_state(
                 model,
                 obs,
@@ -208,7 +192,6 @@ def visualize_flight(model_path="models/ppo_drone_nav_test",
                 episode_starts=episode_starts
             )
             actions_log.append(action[0].copy())
-
 
             try:
                 curr_pos = env.envs[0]._getDroneStateVector(0)[:3]
@@ -222,10 +205,8 @@ def visualize_flight(model_path="models/ppo_drone_nav_test",
             trajectory.append(curr_pos.copy())
             velocities_log.append(curr_vel.copy())
 
-
             dist_to_goal = np.linalg.norm(goal_pos - curr_pos)
             distances_log.append(dist_to_goal)
-
 
             goal_direction = (goal_pos - curr_pos) / (dist_to_goal + 1e-6)
             speed = np.linalg.norm(curr_vel)
@@ -236,13 +217,11 @@ def visualize_flight(model_path="models/ppo_drone_nav_test",
             else:
                 heading_errors_log.append(90.0)
 
-
             if step % 30 == 0:
                 print(f"  Step {step:3d} | Pos: [{curr_pos[0]:6.2f}, {curr_pos[1]:6.2f}, {curr_pos[2]:6.2f}] | "
                       f"Dist: {dist_to_goal:5.2f}m | Speed: {speed:4.2f}m/s | Heading: {heading_errors_log[-1]:5.1f}°")
                 print(f"           | Action: [{action[0][0]:5.2f}, {action[0][1]:5.2f}, {action[0][2]:5.2f}, {action[0][3]:5.2f}] | "
                       f"Vel: [{curr_vel[0]:5.2f}, {curr_vel[1]:5.2f}, {curr_vel[2]:5.2f}]")
-
 
             try:
                 step_result = env.step(action)
@@ -252,7 +231,6 @@ def visualize_flight(model_path="models/ppo_drone_nav_test",
                     stop_visualization = True
                     break
                 raise
-
 
             if len(step_result) == 5:
                 obs, reward, terminated, truncated, info = step_result
@@ -268,15 +246,12 @@ def visualize_flight(model_path="models/ppo_drone_nav_test",
 
             if done[0]:
 
-
                 final_pos = np.array(info[0].get("final_pos", curr_pos), dtype=float)
                 pos_after_step = final_pos
-
 
                 is_success = info[0].get("is_success", False)
                 is_crash = info[0].get("is_crash", False)
                 has_contact = bool(info[0].get("has_contact", False))
-
 
                 arena_x = env.envs[0].arena_size_x / 2
                 arena_y = env.envs[0].arena_size_y / 2
@@ -289,9 +264,7 @@ def visualize_flight(model_path="models/ppo_drone_nav_test",
                     final_pos[2] > arena_z
                 )
 
-
                 out_of_bounds_after = bool(info[0].get("out_of_bounds", False))
-
 
                 print(f"\n  [DEBUG] Pos BEFORE step: [{final_pos[0]:.2f}, {final_pos[1]:.2f}, {final_pos[2]:.2f}]")
                 print(f"  [DEBUG] Pos AFTER step:  [{pos_after_step[0]:.2f}, {pos_after_step[1]:.2f}, {pos_after_step[2]:.2f}]")
@@ -311,17 +284,14 @@ def visualize_flight(model_path="models/ppo_drone_nav_test",
                 else:
                     result = "TIMEOUT"
 
-
                 min_dist = min(distances_log)
                 avg_speed = np.mean([np.linalg.norm(v) for v in velocities_log])
                 avg_heading = np.mean(heading_errors_log) if heading_errors_log else 0
-
 
                 straight_dist = np.linalg.norm(goal_pos - trajectory[0])
                 path_length = sum(np.linalg.norm(trajectory[i] - trajectory[i-1])
                                  for i in range(1, len(trajectory)))
                 path_efficiency = straight_dist / (path_length + 1e-6)
-
 
                 actions_array = np.array(actions_log)
                 action_mean = np.mean(actions_array, axis=0)
@@ -342,7 +312,6 @@ def visualize_flight(model_path="models/ppo_drone_nav_test",
                 print(f"  Action smoothness: {action_smoothness:.3f}")
                 print(f"  Trajectory length: {len(trajectory)} points")
 
-
                 if episode < n_episodes - 1:
                     print("\n  Next episode in 2 seconds...")
                     time.sleep(2)
@@ -355,7 +324,6 @@ def visualize_flight(model_path="models/ppo_drone_nav_test",
     print("\n" + "=" * 60)
     print("VISUALIZATION FINISHED")
     print("=" * 60)
-
 
 if __name__ == "__main__":
     import argparse
@@ -390,7 +358,6 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
     show_paths = args.show_paths or (not args.no_show_paths)
-
 
     if args.stage == 'pretrain':
         stage = 'pretrain'

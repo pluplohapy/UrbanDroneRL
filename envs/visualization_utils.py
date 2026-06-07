@@ -1,11 +1,9 @@
 import pybullet as p
 
-
 def draw_arena_boundaries(client_id, arena_size_x, arena_size_y, arena_height):
     half_x = arena_size_x / 2
     half_y = arena_size_y / 2
     height = arena_height
-
 
     corners = [
         [-half_x, -half_y],
@@ -71,7 +69,6 @@ def draw_arena_boundaries(client_id, arena_size_x, arena_size_y, arena_height):
             physicsClientId=client_id
         )
         x += grid_step
-
 
 def draw_goal_marker(goal_pos, client_id):
     p.addUserDebugLine(

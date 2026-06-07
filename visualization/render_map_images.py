@@ -16,7 +16,6 @@ import pybullet_data
 from config import apply_pretrain_obstacle_overrides, load_config
 from scenarios.stage_pretrain import StagePretrainScenario
 
-
 DEFAULT_MAPS = (
     "cylinders",
     "beams",
@@ -53,7 +52,6 @@ MAP_SEEDS = {
     "city_blocks": 3978,
 }
 
-
 def _create_visual_box(client_id, position, half_extents, color):
     visual_shape = p.createVisualShape(
         p.GEOM_BOX,
@@ -68,7 +66,6 @@ def _create_visual_box(client_id, position, half_extents, color):
         basePosition=position,
         physicsClientId=client_id,
     )
-
 
 def _create_visual_cylinder(client_id, position, radius, length, color, orientation=None):
     visual_shape = p.createVisualShape(
@@ -87,7 +84,6 @@ def _create_visual_cylinder(client_id, position, radius, length, color, orientat
         physicsClientId=client_id,
     )
 
-
 def _create_visual_sphere(client_id, position, radius, color):
     visual_shape = p.createVisualShape(
         p.GEOM_SPHERE,
@@ -102,7 +98,6 @@ def _create_visual_sphere(client_id, position, radius, color):
         basePosition=position,
         physicsClientId=client_id,
     )
-
 
 def _add_presentation_floor_and_frame(client_id, cfg):
     arena_x = float(cfg.ARENA_SIZE_X)
@@ -171,7 +166,6 @@ def _add_presentation_floor_and_frame(client_id, cfg):
                 [0.18, 0.19, 0.22, 1.0],
             )
 
-
 def _add_start_goal_markers(client_id, start_pos, goal_pos, cfg):
     marker_radius = max(0.18, min(0.35, min(float(cfg.ARENA_SIZE_X), float(cfg.ARENA_SIZE_Y)) * 0.045))
 
@@ -180,7 +174,6 @@ def _add_start_goal_markers(client_id, start_pos, goal_pos, cfg):
 
     _create_visual_sphere(client_id, start_pos, marker_radius, start_color)
     _create_visual_sphere(client_id, goal_pos, marker_radius, goal_color)
-
 
 def _style_existing_bodies(client_id):
     for body_index in range(p.getNumBodies(physicsClientId=client_id)):
@@ -194,7 +187,6 @@ def _style_existing_bodies(client_id):
             )
         except Exception:
             pass
-
 
 def _camera_matrices(cfg, view_name, width, height):
     arena_x = float(cfg.ARENA_SIZE_X)
@@ -238,7 +230,6 @@ def _camera_matrices(cfg, view_name, width, height):
     )
     return view, projection
 
-
 def _render_camera(client_id, cfg, output_path, width, height, view_name):
     view_matrix, projection_matrix = _camera_matrices(cfg, view_name, width, height)
     _, _, rgba, _, _ = p.getCameraImage(
@@ -253,7 +244,6 @@ def _render_camera(client_id, cfg, output_path, width, height, view_name):
     )
     frame = np.reshape(np.asarray(rgba, dtype=np.uint8), (height, width, 4))
     Image.fromarray(frame[:, :, :3], mode="RGB").save(output_path, quality=95)
-
 
 def render_map(map_name, output_dir, width, height, seed, dynamic_seconds, views, show_floor_frame=True):
     cfg = apply_pretrain_obstacle_overrides(load_config("pretrain"), map_name)
@@ -286,7 +276,6 @@ def render_map(map_name, output_dir, width, height, seed, dynamic_seconds, views
     p.disconnect(physicsClientId=client_id)
     return result_paths
 
-
 def _load_font(size):
     candidates = (
         "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
@@ -299,7 +288,6 @@ def _load_font(size):
         if Path(candidate).exists():
             return ImageFont.truetype(candidate, size)
     return ImageFont.load_default()
-
 
 def _make_contact_sheet(output_dir, map_names, view_name):
     images = []
@@ -341,7 +329,6 @@ def _make_contact_sheet(output_dir, map_names, view_name):
     output_path = output_dir / f"00_contact_sheet_{view_name}.png"
     sheet.save(output_path, quality=95)
     return output_path
-
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Render presentation map screenshots")
@@ -385,7 +372,6 @@ def parse_args():
     )
     return parser.parse_args()
 
-
 def main():
     args = parse_args()
     output_dir = args.output_dir.resolve()
@@ -421,7 +407,6 @@ def main():
         for path in all_paths:
             handle.write(f"{path.name}\n")
     print(f"Manifest: {manifest}")
-
 
 if __name__ == "__main__":
     main()

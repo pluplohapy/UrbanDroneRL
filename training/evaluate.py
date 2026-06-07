@@ -15,7 +15,6 @@ try:
 except ImportError:
     RecurrentPPO = None
 
-
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from envs.nav_aviary import NavAviary
@@ -25,7 +24,6 @@ from scenarios.stage1_static import Stage1Scenario
 from scenarios.stage_pretrain import StagePretrainScenario
 from config import load_config, apply_pretrain_obstacle_overrides
 from config.runtime_sync import sync_runtime_config
-
 
 ALGO_CHOICES = ("ppo", "recurrent_ppo")
 PRETRAIN_OBSTACLE_CHOICES = (
@@ -46,7 +44,6 @@ PRETRAIN_OBSTACLE_CHOICES = (
     "swinging_sticks",
 )
 
-
 def get_algorithm_class(algo: str):
     if algo == "ppo":
         return PPO
@@ -57,7 +54,6 @@ def get_algorithm_class(algo: str):
             )
         return RecurrentPPO
     raise ValueError(f"Unknown algorithm: {algo}")
-
 
 def predict_with_optional_state(model, obs, deterministic: bool, lstm_states=None, episode_starts=None):
     if RecurrentPPO is not None and isinstance(model, RecurrentPPO):
@@ -73,7 +69,6 @@ def predict_with_optional_state(model, obs, deterministic: bool, lstm_states=Non
     action, _ = model.predict(obs, deterministic=deterministic)
     return action, None
 
-
 def _safe_float(value: Any) -> float | None:
     try:
         if value is None:
@@ -84,7 +79,6 @@ def _safe_float(value: Any) -> float | None:
         return value
     except Exception:
         return None
-
 
 def _build_env(stage: str, obstacle_type: str, seed: int, use_planner: bool, config):
     if stage == "pretrain":
@@ -116,7 +110,6 @@ def _build_env(stage: str, obstacle_type: str, seed: int, use_planner: bool, con
         )
 
     return NavAviary(scenario=scenario, gui=False)
-
 
 def _summarize(records, timeout_near_goal_threshold: float):
     total = len(records)
@@ -191,7 +184,6 @@ def _summarize(records, timeout_near_goal_threshold: float):
     summary["by_obstacle_type"] = by_obstacle_type
     return summary
 
-
 def _summarize_basic(records):
     total = len(records)
     if total == 0:
@@ -222,7 +214,6 @@ def _summarize_basic(records):
         "mean_steps": float(np.mean([r["steps"] for r in records])),
         "mean_final_dist": float(np.mean(final_dist)) if final_dist else None,
     }
-
 
 def main():
     parser = argparse.ArgumentParser(description="Evaluate trained drone navigation policy")
@@ -453,7 +444,6 @@ def main():
 
     finally:
         env.close()
-
 
 if __name__ == "__main__":
     main()

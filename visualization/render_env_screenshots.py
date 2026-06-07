@@ -18,14 +18,12 @@ from envs.nav_aviary import NavAviary
 from scenarios.stage_pretrain import StagePretrainScenario
 from visualization.render_map_images import MAP_LABELS, MAP_SEEDS, _make_contact_sheet
 
-
 DEFAULT_MAPS = (
     "cylinders",
     "beams",
     "swinging_sticks",
     "city_dynamic",
 )
-
 
 def _create_marker_sphere(client_id, position, radius, color):
     visual_shape = p.createVisualShape(
@@ -42,12 +40,10 @@ def _create_marker_sphere(client_id, position, radius, color):
         physicsClientId=client_id,
     )
 
-
 def _add_visualization_markers(client_id, start_pos, goal_pos, cfg):
     marker_radius = max(0.16, min(0.32, min(float(cfg.ARENA_SIZE_X), float(cfg.ARENA_SIZE_Y)) * 0.04))
     _create_marker_sphere(client_id, start_pos, marker_radius, [0.1, 0.65, 1.0, 1.0])
     _create_marker_sphere(client_id, goal_pos, marker_radius, [0.0, 0.95, 0.25, 1.0])
-
 
 def _camera_matrices(cfg, view_name, width, height):
     arena_x = float(cfg.ARENA_SIZE_X)
@@ -91,7 +87,6 @@ def _camera_matrices(cfg, view_name, width, height):
     )
     return view, projection
 
-
 def _render_camera(client_id, cfg, output_path, width, height, view_name):
     view_matrix, projection_matrix = _camera_matrices(cfg, view_name, width, height)
     _, _, rgba, _, _ = p.getCameraImage(
@@ -106,7 +101,6 @@ def _render_camera(client_id, cfg, output_path, width, height, view_name):
     )
     frame = np.reshape(np.asarray(rgba, dtype=np.uint8), (height, width, 4))
     Image.fromarray(frame[:, :, :3], mode="RGB").save(output_path, quality=95)
-
 
 def render_environment_map(map_name, output_dir, width, height, seed, dynamic_seconds, views):
     cfg = apply_pretrain_obstacle_overrides(load_config("pretrain"), map_name)
@@ -139,7 +133,6 @@ def render_environment_map(map_name, output_dir, width, height, seed, dynamic_se
         return result_paths
     finally:
         env.close()
-
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Render NavAviary environment screenshots")
@@ -178,7 +171,6 @@ def parse_args():
     )
     return parser.parse_args()
 
-
 def main():
     args = parse_args()
     output_dir = args.output_dir.resolve()
@@ -213,7 +205,6 @@ def main():
         for path in all_paths:
             handle.write(f"{path.name}\n")
     print(f"Manifest: {manifest}")
-
 
 if __name__ == "__main__":
     main()

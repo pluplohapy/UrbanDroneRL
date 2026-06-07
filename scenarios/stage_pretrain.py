@@ -10,7 +10,6 @@ from scenarios.pretrain_obstacles import (
 )
 from config import load_config
 
-
 class StagePretrainScenario(BaseScenario):
 
     def __init__(self, obstacle_type='random', seed=None):
@@ -76,13 +75,10 @@ class StagePretrainScenario(BaseScenario):
         for attempt in range(max_attempts):
             self._cleanup_generated_obstacles()
 
-
             start_pos, goal_pos = self._generate_start_goal_zones()
-
 
             chosen_type = self._resolve_obstacle_type()
             self.current_obstacle_type = chosen_type
-
 
             self._generate_obstacles(chosen_type, start_pos, goal_pos, client_id)
 
@@ -244,7 +240,6 @@ class StagePretrainScenario(BaseScenario):
         path_clearance = float(getattr(self.config, "CYLINDER_PATH_CLEARANCE", 0.45))
         grid_resolution = float(getattr(self.config, "CYLINDER_PATH_GRID_RESOLUTION", 0.20))
 
-
         for target_count in range(n_obstacles, 0, -1):
             for _ in range(40):
                 layout = self._sample_cylinder_layout(
@@ -347,7 +342,6 @@ class StagePretrainScenario(BaseScenario):
         y_vals = np.arange(y_min, y_max + grid_resolution * 0.5, grid_resolution)
         xx, yy = np.meshgrid(x_vals, y_vals)
 
-
         blocked = (np.abs(xx) >= (half_x - clearance)) | (np.abs(yy) >= (half_y - clearance))
 
         for pos, radius, _ in cylinders:
@@ -406,7 +400,6 @@ class StagePretrainScenario(BaseScenario):
             angle = self.rng.uniform(0.0, 2.0 * np.pi)
             direction = np.array([np.cos(angle), np.sin(angle), 0.0])
             sweep_radius = radius + amplitude
-
 
             for _ in range(80):
                 x_min = -half_x + sweep_radius + 0.15
@@ -496,14 +489,12 @@ class StagePretrainScenario(BaseScenario):
             height = self.rng.uniform(*params['height'])
             thickness = params['thickness']
 
-
             for _ in range(50):
                 x = self.rng.uniform(-self.config.ARENA_SIZE_X/2 + width/2,
                                     self.config.ARENA_SIZE_X/2 - width/2)
                 y = self.rng.uniform(-self.config.ARENA_SIZE_Y/2 + thickness/2,
                                     self.config.ARENA_SIZE_Y/2 - thickness/2)
                 pos = np.array([x, y, 0.0])
-
 
                 if self._is_valid_position(pos, width/2, start_pos, goal_pos):
                     obstacle = WallObstacle(pos, width, height, thickness, client_id)
@@ -573,7 +564,6 @@ class StagePretrainScenario(BaseScenario):
         for _ in range(n_obstacles):
             size = self.rng.uniform(*params['size'])
             height = self.rng.uniform(*params['height'])
-
 
             for _ in range(50):
                 x = self.rng.uniform(-self.config.ARENA_SIZE_X/2 + 1, self.config.ARENA_SIZE_X/2 - 1)
@@ -802,8 +792,6 @@ class StagePretrainScenario(BaseScenario):
                                 rgba_color=sign_color,
                             ))
 
-
-
         wire_count = int(self.rng.randint(params['wire_count'][0], params['wire_count'][1] + 1))
         for y in np.linspace(y_min + 1.0, y_max - 1.0, wire_count):
             length = self.rng.uniform(*params['wire_length'])
@@ -817,7 +805,6 @@ class StagePretrainScenario(BaseScenario):
                 swing_period=6.0,
                 physics_client=client_id,
             ))
-
 
         for idx in range(int(self.rng.randint(params['vehicle_count'][0], params['vehicle_count'][1] + 1))):
             lane_x = self.rng.uniform(-0.55, 0.55)
@@ -844,7 +831,6 @@ class StagePretrainScenario(BaseScenario):
                 direction=direction,
                 phase=self.rng.uniform(0.0, 2.0 * np.pi),
             ))
-
 
         bird_count = int(self.rng.randint(params['bird_count'][0], params['bird_count'][1] + 1))
         bird_z_low = float(params['bird_height'][0])
@@ -919,7 +905,6 @@ class StagePretrainScenario(BaseScenario):
                 x_center = float(np.clip(x_center, -half_x + width_x / 2.0, half_x - width_x / 2.0))
                 frame_sites.append((x_center, y_center, width_x, depth_y, height, side))
 
-
                 slab_count = max(1, levels)
                 level_values = np.linspace(0.85, max(1.1, height - 0.35), slab_count)
                 for level in level_values:
@@ -933,7 +918,6 @@ class StagePretrainScenario(BaseScenario):
                         rgba_color=slab_color,
                     ))
 
-
                 column_radius = self.rng.uniform(*params['column_radius'])
                 for x_offset, y_offset in (
                     (-width_x / 2.0 + 0.18, -depth_y / 2.0 + 0.18),
@@ -945,7 +929,6 @@ class StagePretrainScenario(BaseScenario):
                         height=height,
                         physics_client=client_id,
                     ))
-
 
                 facade_x = lane_left - 0.18 if side < 0 else lane_right + 0.18
                 facade_x = float(np.clip(facade_x, -half_x + 0.12, half_x - 0.12))
@@ -969,7 +952,6 @@ class StagePretrainScenario(BaseScenario):
                     physics_client=client_id,
                 ))
 
-
                 if row_idx % 2 == 0:
                     self.obstacles.append(BoxObstacle(
                         np.array([facade_x - side * 0.10, y_center + self.rng.uniform(-0.25, 0.25), 0.0]),
@@ -988,7 +970,6 @@ class StagePretrainScenario(BaseScenario):
                         depth=self.rng.uniform(0.35, 0.75),
                         rgba_color=frame_color,
                     ))
-
 
         crane_count = int(self.rng.randint(params['crane_count'][0], params['crane_count'][1] + 1))
         crane_y_values = np.linspace(y_min + 2.0, y_max - 2.0, max(crane_count, 1))
@@ -1016,7 +997,6 @@ class StagePretrainScenario(BaseScenario):
                 phase=self.rng.uniform(0.0, 2.0 * np.pi),
             ))
 
-
         for _ in range(int(self.rng.randint(params['load_count'][0], params['load_count'][1] + 1))):
             size = self.rng.uniform(*params['load_size'])
             y = self.rng.uniform(y_min + 1.2, y_max - 1.2)
@@ -1038,7 +1018,6 @@ class StagePretrainScenario(BaseScenario):
                 rgba_color=cargo_color,
             ))
 
-
         for idx in range(int(self.rng.randint(params['vehicle_count'][0], params['vehicle_count'][1] + 1))):
             x = self.rng.uniform(-lane_width * 0.25, lane_width * 0.25)
             y = self.rng.uniform(y_min + 1.0, y_max - 1.0)
@@ -1056,7 +1035,6 @@ class StagePretrainScenario(BaseScenario):
                 phase=self.rng.uniform(0.0, 2.0 * np.pi),
                 rgba_color=[0.95, 0.72, 0.10, 1.0] if idx % 2 == 0 else [0.18, 0.42, 0.82, 1.0],
             ))
-
 
         for _ in range(int(self.rng.randint(params['lift_count'][0], params['lift_count'][1] + 1))):
             if frame_sites:
@@ -1083,7 +1061,6 @@ class StagePretrainScenario(BaseScenario):
                 rgba_color=[0.30, 0.62, 0.86, 1.0],
             ))
 
-
         pipe_count = int(self.rng.randint(params['swinging_pipe_count'][0], params['swinging_pipe_count'][1] + 1))
         for y in np.linspace(y_min + 1.5, y_max - 1.5, max(pipe_count, 1))[:pipe_count]:
             length = self.rng.uniform(*params['swinging_pipe_length'])
@@ -1099,7 +1076,6 @@ class StagePretrainScenario(BaseScenario):
                 vertical_swing=False,
                 phase=self.rng.uniform(0.0, 2.0 * np.pi),
             ))
-
 
         debris_count = int(self.rng.randint(params['debris_count'][0], params['debris_count'][1] + 1))
         z_low, z_high = params['debris_height']
@@ -1249,14 +1225,12 @@ class StagePretrainScenario(BaseScenario):
         if abs(pos[1]) + radius + wall_margin > half_y:
             return False
 
-
         dist_to_start = np.linalg.norm(pos[:2] - start_pos[:2])
         dist_to_goal = np.linalg.norm(pos[:2] - goal_pos[:2])
 
         min_clearance = 1.0
         if dist_to_start < min_clearance + radius or dist_to_goal < min_clearance + radius:
             return False
-
 
         if placed:
             for other_pos, other_radius in placed:

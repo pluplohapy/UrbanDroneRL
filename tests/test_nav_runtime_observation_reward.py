@@ -15,14 +15,12 @@ from envs.raycasts import RaycastSensor
 from scenarios.stage_pretrain import StagePretrainScenario
 from training.train import make_env_pretrain, sync_env_runtime_config
 
-
 class _SafeRaycastSensor:
     n_rays = 20
     ray_directions = RaycastSensor().ray_directions
 
     def cast_rays(self, *args, **kwargs):
         return np.ones(self.n_rays, dtype=np.float32)
-
 
 def _nav_stub(cfg=None):
     cfg = cfg or load_config("pretrain")
@@ -58,7 +56,6 @@ def _nav_stub(cfg=None):
     env._get_ray_ignore_ids = lambda: None
     return env
 
-
 def test_pretrain_start_goal_samples_both_corridor_directions():
     scenario = StagePretrainScenario(obstacle_type="empty", seed=123)
     pairs = [scenario._generate_start_goal_zones() for _ in range(100)]
@@ -68,7 +65,6 @@ def test_pretrain_start_goal_samples_both_corridor_directions():
 
     assert forward > 0
     assert backward > 0
-
 
 def test_pretrain_goal_bias_respects_terminal_wall_clearance(monkeypatch):
     scenario = StagePretrainScenario(obstacle_type="empty", seed=456)
@@ -84,7 +80,6 @@ def test_pretrain_goal_bias_respects_terminal_wall_clearance(monkeypatch):
         assert half_x - abs(goal[0]) >= clearance - 1e-9
         assert half_y - abs(goal[1]) >= clearance - 1e-9
         assert 0.75 <= abs(goal[0]) <= 0.95
-
 
 def test_observation_contains_goal_in_body_frame_and_enhanced_features():
     cfg = load_config("pretrain")
@@ -135,7 +130,6 @@ def test_observation_contains_goal_in_body_frame_and_enhanced_features():
     assert 0.0 <= obs[enhanced_start + 3] <= 1.0
     np.testing.assert_allclose(obs[enhanced_start + 4:], np.zeros(env.raycast_sensor.n_rays), atol=1e-6)
 
-
 @pytest.mark.filterwarnings("ignore::UserWarning")
 def test_real_pretrain_env_reset_exposes_goal_and_physical_walls():
     scenario = StagePretrainScenario(obstacle_type="empty", seed=5)
@@ -160,7 +154,6 @@ def test_real_pretrain_env_reset_exposes_goal_and_physical_walls():
     finally:
         env.close()
 
-
 def _reward_for_state(cfg, pos, vel, goal, prev_dist):
     env = _nav_stub(cfg)
     env.raycast_sensor = _SafeRaycastSensor()
@@ -176,7 +169,6 @@ def _reward_for_state(cfg, pos, vel, goal, prev_dist):
 
     reward = env._computeReward()
     return reward, env.reward_components
-
 
 def test_reward_uses_pretrain_config_and_discourages_near_goal_overshoot():
     cfg = load_config("pretrain")
@@ -232,7 +224,6 @@ def test_reward_uses_pretrain_config_and_discourages_near_goal_overshoot():
     assert near_reward > away_reward
     assert far_reward > away_reward
 
-
 def test_timeout_penalty_targets_near_goal_miss_and_regression():
     cfg = load_config("pretrain")
     env = _nav_stub(cfg)
@@ -244,7 +235,6 @@ def test_timeout_penalty_targets_near_goal_miss_and_regression():
     assert far_timeout == 0.0
     assert close_timeout < 0.0
     assert overshoot_timeout < close_timeout
-
 
 def test_pretrain_success_allows_slow_stable_capture_inside_hold_radius():
     cfg = load_config("pretrain")
@@ -276,7 +266,6 @@ def test_pretrain_success_allows_slow_stable_capture_inside_hold_radius():
     state[10:13] = np.array([0.0, 1.0, 0.0], dtype=float)
     assert env._check_goal_success(cfg.SUCCESS_DIST - 0.01, update_counter=True)
 
-
 def test_sync_env_runtime_config_updates_worker_visible_runtime_module(monkeypatch):
     import config as runtime_config
 
@@ -287,7 +276,6 @@ def test_sync_env_runtime_config_updates_worker_visible_runtime_module(monkeypat
 
     assert runtime_config.REWARD_BOUNDARY_THRESHOLD == cfg.REWARD_BOUNDARY_THRESHOLD == 0.0
     assert runtime_config.REWARD_OBSTACLE_HARD_THRESHOLD == cfg.REWARD_OBSTACLE_HARD_THRESHOLD
-
 
 @pytest.mark.filterwarnings("ignore::UserWarning")
 def test_pretrain_subprocess_env_uses_pretrain_reward_config():

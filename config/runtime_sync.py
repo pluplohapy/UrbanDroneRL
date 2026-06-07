@@ -4,14 +4,12 @@ import importlib
 import inspect
 from types import ModuleType
 
-
 def _is_syncable_name(name: str, value) -> bool:
     if not name.isupper():
         return False
     if inspect.ismodule(value) or inspect.isfunction(value) or inspect.ismethod(value):
         return False
     return True
-
 
 def sync_runtime_config(stage_config: ModuleType) -> ModuleType:
     runtime_config = importlib.import_module("config")
